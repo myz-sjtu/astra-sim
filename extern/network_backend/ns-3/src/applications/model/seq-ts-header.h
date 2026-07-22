@@ -63,6 +63,9 @@ class SeqTsHeader : public Header
     void SetPG (uint16_t pg);
     uint16_t GetPG () const;
 
+    void SetFwdMode (uint8_t fwd_mode);
+    uint8_t GetFwdMode () const;
+
     /**
      * \brief Get the type ID.
      * \return the object TypeId
@@ -80,6 +83,7 @@ class SeqTsHeader : public Header
     uint32_t m_seq; //!< Sequence number
     uint64_t m_ts;  //!< Timestamp
     uint16_t m_pg;
+    uint8_t m_fwd_mode; //!< Forwarding mode: 0=flow-based, 1=packet-based
   public:
     IntHeader ih;
 };

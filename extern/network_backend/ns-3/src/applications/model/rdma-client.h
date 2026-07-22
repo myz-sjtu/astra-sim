@@ -83,6 +83,7 @@ private:
   uint64_t tag; 
   uint64_t src; 
   uint64_t dest; 
+  uint8_t m_fwd_mode; // 0=flow-based, 1=packet spray
 };
 
 } // namespace ns3

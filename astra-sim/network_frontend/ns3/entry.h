@@ -120,15 +120,45 @@ map<MsgEventKey, MsgEvent> sim_recv_waiting_hash;
 //   System layer has not yet called sim_recv
 map<MsgEventKey, int> received_msg_standby_hash;
 
+const char *fwd_mode_name(uint8_t fwd_mode) {
+  return fwd_mode == 1 ? "packet-spray-rr" : "flow-ecmp";
+}
+
 // send_flow commands the ns3 simulator to schedule a RDMA message to be sent
 // between two pair of nodes. send_flow is triggered by sim_send.
 void send_flow(int src_id, int dst, int maxPacketCount,
-               void (*msg_handler)(void *fun_arg), void *fun_arg, int tag) {
+               void (*msg_handler)(void *fun_arg), void *fun_arg, int tag, uint8_t fwd_mode=0) {
+  auto flow_key = make_tuple(static_cast<uint32_t>(src_id),
+                             static_cast<uint32_t>(dst),
+                             static_cast<uint32_t>(tag));
+  uint8_t effective_fwd_mode = fwd_mode;
+  auto fwd_mode_override = configured_flow_fwd_mode.find(flow_key);
+  if (fwd_mode_override != configured_flow_fwd_mode.end()) {
+    effective_fwd_mode = fwd_mode_override->second;
+  }
+
+  uint64_t configured_start_ns = 0;
+  auto start_override = configured_flow_start_ns.find(flow_key);
+  if (start_override != configured_flow_start_ns.end()) {
+    configured_start_ns = start_override->second;
+  }
+
   // Get a new port number.
   uint32_t port = portNumber[src_id][dst]++;
   sender_src_port_map[make_pair(port, make_pair(src_id, dst))] = tag;
   int pg = 3, dport = 100;
   flow_input.idx++;
+
+  static bool printed_first_flow = false;
+  if (!printed_first_flow) {
+    cout << "[AstraSimNetwork] first send_flow uses fwd_mode="
+         << static_cast<uint32_t>(effective_fwd_mode) << " ("
+         << fwd_mode_name(effective_fwd_mode)
+         << "), src=" << src_id << ", dst=" << dst
+         << ", bytes=" << maxPacketCount << ", tag=" << tag
+         << ", configured_start_ns=" << configured_start_ns << "\n";
+    printed_first_flow = true;
+  }
 
   // Create a MsgEvent instance and register callback function.
   MsgEvent send_event =
@@ -144,9 +174,12 @@ void send_flow(int src_id, int dst, int maxPacketCount,
       has_win ? (global_t == 1 ? maxBdp : pairBdp[n.Get(src_id)][n.Get(dst)])
               : 0,
       global_t == 1 ? maxRtt : pairRtt[src_id][dst], msg_handler, fun_arg, tag,
-      src_id, dst);
+      src_id, dst, effective_fwd_mode);
   ApplicationContainer appCon = clientHelper.Install(n.Get(src_id));
-  appCon.Start(Time(0));
+  uint64_t now_ns = Simulator::Now().GetTimeStep();
+  appCon.Start(configured_start_ns > now_ns
+                   ? NanoSeconds(configured_start_ns - now_ns)
+                   : Time(0));
 }
 
 // notify_receiver_receive_data looks at whether the System layer has issued
@@ -293,6 +326,13 @@ int setup_ns3_simulation(string network_configuration) {
   if (!SetupNetwork(qp_finish)) {
     return -1;
   }
+
+  cout << "[AstraSimNetwork] forwarding config: DEFAULT_FWD_MODE="
+       << static_cast<uint32_t>(default_fwd_mode) << " ("
+       << fwd_mode_name(default_fwd_mode) << "), FLOW_STRATEGY="
+       << flow_strategy << ", PACKET_STRATEGY=" << packet_strategy << "\n";
+  cout << "[AstraSimNetwork] input files: TOPOLOGY_FILE=" << topology_file
+       << ", FLOW_FILE=" << flow_file << ", TRACE_FILE=" << trace_file << "\n";
 
   return 0;
 
