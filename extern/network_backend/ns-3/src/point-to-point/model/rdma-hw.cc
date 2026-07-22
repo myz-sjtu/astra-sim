@@ -227,7 +227,7 @@ Ptr<RdmaQueuePair> RdmaHw::GetQp(uint32_t dip, uint16_t sport, uint16_t pg){
 		return it->second;
 	return NULL;
 }
-void RdmaHw::AddQueuePair(uint32_t src, uint32_t dest, uint64_t tag, uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Address dip, uint16_t sport, uint16_t dport, uint32_t win, uint64_t baseRtt, Callback<void> notifyAppFinish, Callback<void> notifyAppSent){
+void RdmaHw::AddQueuePair(uint32_t src, uint32_t dest, uint64_t tag, uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Address dip, uint16_t sport, uint16_t dport, uint32_t win, uint64_t baseRtt, Callback<void> notifyAppFinish, Callback<void> notifyAppSent, uint8_t fwd_mode){
 	// create qp
 	Ptr<RdmaQueuePair> qp = CreateObject<RdmaQueuePair>(pg, sip, dip, sport, dport);
 	qp->SetSrc(src);
@@ -240,6 +240,7 @@ void RdmaHw::AddQueuePair(uint32_t src, uint32_t dest, uint64_t tag, uint64_t si
 	qp->SetVarWin(m_var_win);
 	qp->SetAppNotifyCallback(notifyAppFinish);
 	qp->SetAppSentCallback(notifyAppSent);
+	qp->m_fwd_mode = fwd_mode;
 	// add qp
 	uint32_t nic_idx = GetNicIdxOfQp(qp);
 	m_nic[nic_idx].qpGrp->AddQp(qp);
@@ -338,6 +339,9 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch){
 	uint32_t payload_size = p->GetSize() - ch.GetSerializedSize();
 	// TODO find corresponding rx queue pair
 	Ptr<RdmaRxQueuePair> rxQp = GetRxQp(ch.dip, ch.sip, ch.udp.dport, ch.udp.sport, ch.udp.pg, true);
+	// Enable out-of-order reception for packet spray flows
+	if (ch.udp.fwd_mode == 1)
+		rxQp->m_oooEnabled = true;
 	uint32_t nic_id = GetNicIdxOfRxQp(rxQp);
     if (enable_pcie_pause){ //&& ((m_node->GetId())%16 == 0 || (m_node->GetId())%16 == 8)) { //&& Simulator::Now().GetMicroSeconds() > m_node->GetId(4)
       PCIePause(nic_id, ch.udp.pg);
@@ -500,32 +504,61 @@ int RdmaHw::Receive(Ptr<Packet> p, CustomHeader &ch){
 }
 
 int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size){
-	uint32_t expected = q->ReceiverNextExpectedSeq;
-	if (seq == expected){
-		q->ReceiverNextExpectedSeq = expected + size;
-		if (q->ReceiverNextExpectedSeq >= q->m_milestone_rx){
-			q->m_milestone_rx += m_ack_interval;
-			return 1; //Generate ACK
-		}else if (q->ReceiverNextExpectedSeq % m_chunk == 0){
-			return 1;
-		}else {
-			return 5;
-		}
-	} else if (seq > expected) {
-		// Generate NACK
-		if (Simulator::Now() >= q->m_nackTimer || q->m_lastNACK != expected){
-			q->m_nackTimer = Simulator::Now() + MicroSeconds(m_nack_interval);
-			q->m_lastNACK = expected;
-			if (m_backto0){
-				q->ReceiverNextExpectedSeq = q->ReceiverNextExpectedSeq / m_chunk*m_chunk;
-			}
-			return 2;
-		}else
-			return 4;
-	}else {
-		// Duplicate.
-		return 3;
-	}
+    uint32_t expected = q->ReceiverNextExpectedSeq;
+
+    // Out-of-order mode (for packet spray)
+    if (q->m_oooEnabled) {
+        // Already received this packet?
+        if (seq < expected || q->m_oooReceived.count(seq))
+            return 3; // Duplicate
+
+        // Cache the received packet
+        q->m_oooReceived[seq] = size;
+
+        // Advance expected through contiguous cached packets
+        while (q->m_oooReceived.count(expected)) {
+            expected += q->m_oooReceived[expected];
+            q->m_oooReceived.erase(expected - size); // erase by key
+            // Note: after erase, expected already points to next expected
+        }
+        q->ReceiverNextExpectedSeq = expected;
+
+        if (q->ReceiverNextExpectedSeq >= q->m_milestone_rx) {
+            q->m_milestone_rx += m_ack_interval;
+            return 1; // Generate ACK
+        } else if (q->ReceiverNextExpectedSeq % m_chunk == 0) {
+            return 1;
+        } else {
+            return 5;
+        }
+    }
+
+    // Original in-order logic
+    if (seq == expected){
+        q->ReceiverNextExpectedSeq = expected + size;
+        if (q->ReceiverNextExpectedSeq >= q->m_milestone_rx){
+            q->m_milestone_rx += m_ack_interval;
+            return 1; //Generate ACK
+        }else if (q->ReceiverNextExpectedSeq % m_chunk == 0){
+            return 1;
+        }else {
+            return 5;
+        }
+    } else if (seq > expected) {
+        // Generate NACK
+        if (Simulator::Now() >= q->m_nackTimer || q->m_lastNACK != expected){
+            q->m_nackTimer = Simulator::Now() + MicroSeconds(m_nack_interval);
+            q->m_lastNACK = expected;
+            if (m_backto0){
+                q->ReceiverNextExpectedSeq = q->ReceiverNextExpectedSeq / m_chunk*m_chunk;
+            }
+            return 2;
+        }else
+            return 4;
+    }else {
+        // Duplicate.
+        return 3;
+    }
 }
 void RdmaHw::AddHeader (Ptr<Packet> p, uint16_t protocolNumber){
 	PppHeader ppp;
@@ -603,6 +636,7 @@ Ptr<Packet> RdmaHw::GetNxtPacket(Ptr<RdmaQueuePair> qp){
 	SeqTsHeader seqTs;
 	seqTs.SetSeq (qp->snd_nxt);
 	seqTs.SetPG (qp->m_pg);
+	seqTs.SetFwdMode (qp->m_fwd_mode);
 	p->AddHeader (seqTs);
 	// add udp header
 	UdpHeader udpHeader;

@@ -130,7 +130,7 @@ class ASTRASimNetwork : public AstraSim::AstraNetworkAPI {
         int src_id = rank;
 
         // Trigger ns3 to schedule RDMA QP event.
-        send_flow(src_id, dst_id, message_size, msg_handler, fun_arg, tag);
+        send_flow(src_id, dst_id, message_size, msg_handler, fun_arg, tag, default_fwd_mode);
         return 0;
     }
 

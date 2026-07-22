@@ -12,6 +12,11 @@ namespace ns3 {
 class Packet;
 
 class SwitchNode : public Node{
+public:
+	// Forwarding strategy enums
+	enum FlowStrategy { FLOW_STRATEGY_ECMP = 0 };
+	enum PacketStrategy { PKT_STRATEGY_RR = 0 };
+
 	static const uint32_t pCnt = 1025;	// Number of ports used
 	static const uint32_t qCnt = 8;	// Number of queues/priorities used
 	uint32_t m_ecmpSeed;
@@ -26,6 +31,9 @@ class SwitchNode : public Node{
 	uint64_t m_lastPktTs[pCnt]; // ns
 	double m_u[pCnt];
 
+	// Packet spray round-robin counter per ingress port
+	uint32_t m_rrCounter[pCnt];
+
 protected:
 	bool m_ecnEnabled;
 	uint32_t m_ccMode;
@@ -33,8 +41,14 @@ protected:
 
 	uint32_t m_ackHighPrio; // set high priority for ACK/NACK
 
+	// Strategy configuration
+	uint32_t m_flowStrategy;
+	uint32_t m_packetStrategy;
+
 private:
 	int GetOutDev(Ptr<const Packet>, CustomHeader &ch);
+	int GetOutDevFlowECMP(Ptr<const Packet>, CustomHeader &ch);
+	int GetOutDevPktSprayRR(Ptr<const Packet>, CustomHeader &ch);
 	void SendToDev(Ptr<Packet>p, CustomHeader &ch);
 	static uint32_t EcmpHash(const uint8_t* key, size_t len, uint32_t seed);
 	void CheckAndSendPfc(uint32_t inDev, uint32_t qIndex);

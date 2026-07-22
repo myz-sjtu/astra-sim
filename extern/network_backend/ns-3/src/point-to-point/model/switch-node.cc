@@ -40,6 +40,16 @@ TypeId SwitchNode::GetTypeId (void)
 			UintegerValue(9000),
 			MakeUintegerAccessor(&SwitchNode::m_maxRtt),
 			MakeUintegerChecker<uint32_t>())
+	.AddAttribute("FlowStrategy",
+			"Flow-based forwarding strategy (0=ECMP)",
+			UintegerValue(0),
+			MakeUintegerAccessor(&SwitchNode::m_flowStrategy),
+			MakeUintegerChecker<uint32_t>())
+	.AddAttribute("PacketStrategy",
+			"Packet-based forwarding strategy (0=RoundRobin)",
+			UintegerValue(0),
+			MakeUintegerAccessor(&SwitchNode::m_packetStrategy),
+			MakeUintegerChecker<uint32_t>())
   ;
   return tid;
 }
@@ -58,9 +68,32 @@ SwitchNode::SwitchNode(){
 		m_lastPktSize[i] = m_lastPktTs[i] = 0;
 	for (uint32_t i = 0; i < pCnt; i++)
 		m_u[i] = 0;
+	for (uint32_t i = 0; i < pCnt; i++)
+		m_rrCounter[i] = 0;
+	m_flowStrategy = 0;
+	m_packetStrategy = 0;
 }
 
 int SwitchNode::GetOutDev(Ptr<const Packet> p, CustomHeader &ch){
+	// Dispatch based on forwarding mode in header
+	if (ch.l3Prot == 0x11 && ch.udp.fwd_mode == 1) {
+		// Packet spray mode
+		switch (m_packetStrategy) {
+			case PKT_STRATEGY_RR:
+			default:
+				return GetOutDevPktSprayRR(p, ch);
+		}
+	} else {
+		// Flow-based mode (default for UDP and all other protocols)
+		switch (m_flowStrategy) {
+			case FLOW_STRATEGY_ECMP:
+			default:
+				return GetOutDevFlowECMP(p, ch);
+		}
+	}
+}
+
+int SwitchNode::GetOutDevFlowECMP(Ptr<const Packet> p, CustomHeader &ch){
 	// look up entries
 	auto entry = m_rtTable.find(ch.dip);
 
@@ -86,6 +119,29 @@ int SwitchNode::GetOutDev(Ptr<const Packet> p, CustomHeader &ch){
 		buf.u32[2] = ch.ack.sport | ((uint32_t)ch.ack.dport << 16);
 
 	uint32_t idx = EcmpHash(buf.u8, 12, m_ecmpSeed) % nexthops.size();
+	return nexthops[idx];
+}
+
+int SwitchNode::GetOutDevPktSprayRR(Ptr<const Packet> p, CustomHeader &ch){
+	// look up entries
+	auto entry = m_rtTable.find(ch.dip);
+
+	// no matching entry
+	if (entry == m_rtTable.end())
+		return -1;
+
+	// entry found
+	auto &nexthops = entry->second;
+
+	// get ingress port
+	FlowIdTag t;
+	uint32_t inDev = 0;
+	if (p->PeekPacketTag(t))
+		inDev = t.GetFlowId();
+
+	// round-robin among nexthops
+	uint32_t idx = m_rrCounter[inDev] % nexthops.size();
+	m_rrCounter[inDev]++;
 	return nexthops[idx];
 }
 
@@ -221,7 +277,7 @@ void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Pack
 	if (1){
 		uint8_t* buf = p->GetBuffer();
 		if (buf[PppHeader::GetStaticSize() + 9] == 0x11){ // udp packet
-			IntHeader *ih = (IntHeader*)&buf[PppHeader::GetStaticSize() + 20 + 8 + 6]; // ppp, ip, udp, SeqTs, INT
+			IntHeader *ih = (IntHeader*)&buf[PppHeader::GetStaticSize() + 20 + 8 + 7]; // ppp, ip, udp, SeqTs(4+2+1), INT
 			Ptr<QbbNetDevice> dev = DynamicCast<QbbNetDevice>(m_devices[ifIndex]);
 			if (m_ccMode == 3){ // HPCC
 				ih->PushHop(Simulator::Now().GetTimeStep(), m_txBytes[ifIndex], dev->GetQueue()->GetNBytesTotal(), dev->GetDataRate().GetBitRate());

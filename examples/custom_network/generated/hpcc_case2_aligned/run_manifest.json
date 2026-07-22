@@ -1,0 +1,14 @@
+{
+  "name": "hpcc_case2_aligned",
+  "num_npus": 10,
+  "workload_configuration": "../../../examples/custom_network/generated/hpcc_case2_aligned/workload/custom_traffic",
+  "system_configuration": "../../../examples/system/native_collectives/Ring_4chunks.json",
+  "network_configuration": "../../../examples/custom_network/generated/hpcc_case2_aligned/network_config.txt",
+  "remote_memory_configuration": "../../../examples/remote_memory/analytical/no_memory_expansion.json",
+  "logical_topology_configuration": "../../../examples/custom_network/generated/hpcc_case2_aligned/logical_topology.json",
+  "comm_group_configuration": "empty",
+  "fct_output": "scratch/output/hpcc_case2_aligned/fct.txt",
+  "output_directory": "scratch/output/hpcc_case2_aligned",
+  "annotation_command": "python3 ../../../examples/custom_network/annotate_output_files.py --output-dir scratch/output/hpcc_case2_aligned",
+  "traffic_manifest": "../../../examples/custom_network/generated/hpcc_case2_aligned/traffic_manifest.json"
+}

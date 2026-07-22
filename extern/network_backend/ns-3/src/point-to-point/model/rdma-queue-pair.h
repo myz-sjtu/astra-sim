@@ -9,6 +9,7 @@
 #include <ns3/custom-header.h>
 #include <ns3/int-header.h>
 #include <vector>
+#include <unordered_map>
 
 namespace ns3 {
 
@@ -21,6 +22,7 @@ public:
 	uint32_t m_src, m_dest;
 	uint64_t snd_nxt, snd_una; // next seq to send, the highest unacked seq
 	uint16_t m_pg;
+	uint8_t m_fwd_mode; //!< Forwarding mode: 0=flow-based, 1=packet-based
 	uint16_t m_ipid;
 	uint32_t m_win; // bound of on-the-fly packets
 	uint64_t m_baseRtt; // base RTT of this qp
@@ -127,6 +129,10 @@ public:
 	int32_t m_milestone_rx;
 	uint32_t m_lastNACK;
 	EventId QcnTimerEvent; // if destroy this rxQp, remember to cancel this timer
+
+	// Out-of-order reception support (for packet spray)
+	bool m_oooEnabled;                                    //!< Enable out-of-order reception
+	std::unordered_map<uint32_t, uint32_t> m_oooReceived; //!< Cached OOO packets: seq → size
 
 	static TypeId GetTypeId (void);
 	RdmaRxQueuePair();

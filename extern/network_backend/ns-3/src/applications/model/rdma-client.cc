@@ -81,7 +81,11 @@ TypeId RdmaClient::GetTypeId(void) {
                         MakeUintegerChecker<uint64_t>())
           .AddAttribute("Dest", "Dest", UintegerValue(0),
                         MakeUintegerAccessor(&RdmaClient::dest),
-                        MakeUintegerChecker<uint64_t>());
+                        MakeUintegerChecker<uint64_t>())
+          .AddAttribute("FwdMode", "Forwarding mode: 0=flow, 1=packet",
+                        UintegerValue(0),
+                        MakeUintegerAccessor(&RdmaClient::m_fwd_mode),
+                        MakeUintegerChecker<uint8_t>());
   return tid;
 }
 
@@ -127,7 +131,8 @@ void RdmaClient::StartApplication(void) {
   rdma->AddQueuePair(src, dest, tag, m_size, m_pg, m_sip, m_dip, m_sport,
                      m_dport, m_win, m_baseRtt,
                      MakeCallback(&RdmaClient::Finish, this),
-                     MakeCallback(&RdmaClient::Sent, this));
+                     MakeCallback(&RdmaClient::Sent, this),
+                     m_fwd_mode);
 }
 
 void RdmaClient::StopApplication() {

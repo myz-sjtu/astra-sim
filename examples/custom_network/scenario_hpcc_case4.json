@@ -1,0 +1,160 @@
+{
+  "name": "hpcc_case4_aligned",
+  "num_npus": 10,
+  "switches": [
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16
+  ],
+  "leaf_switches": [
+    10,
+    11,
+    12,
+    13,
+    14
+  ],
+  "spine_switches": [
+    15,
+    16
+  ],
+  "link_defaults": {
+    "bandwidth": "400Gbps",
+    "latency": "1000ns",
+    "error_rate": 0.0
+  },
+  "links": [
+    {
+      "src": 0,
+      "dst": 10
+    },
+    {
+      "src": 1,
+      "dst": 10
+    },
+    {
+      "src": 2,
+      "dst": 11
+    },
+    {
+      "src": 3,
+      "dst": 11
+    },
+    {
+      "src": 4,
+      "dst": 12
+    },
+    {
+      "src": 5,
+      "dst": 12
+    },
+    {
+      "src": 6,
+      "dst": 13
+    },
+    {
+      "src": 7,
+      "dst": 13
+    },
+    {
+      "src": 8,
+      "dst": 14
+    },
+    {
+      "src": 9,
+      "dst": 14
+    },
+    {
+      "src": 10,
+      "dst": 15
+    },
+    {
+      "src": 10,
+      "dst": 16
+    },
+    {
+      "src": 11,
+      "dst": 15
+    },
+    {
+      "src": 11,
+      "dst": 16
+    },
+    {
+      "src": 12,
+      "dst": 15
+    },
+    {
+      "src": 12,
+      "dst": 16
+    },
+    {
+      "src": 13,
+      "dst": 15
+    },
+    {
+      "src": 13,
+      "dst": 16
+    },
+    {
+      "src": 14,
+      "dst": 15
+    },
+    {
+      "src": 14,
+      "dst": 16
+    }
+  ],
+  "flows": [
+    {
+      "src": 1,
+      "dst": 2,
+      "bytes": 100000000,
+      "tag": 1,
+      "start_time_s": 2,
+      "strategy": 1
+    },
+    {
+      "src": 4,
+      "dst": 3,
+      "bytes": 100000000,
+      "tag": 2,
+      "start_time_s": 2,
+      "strategy": 1
+    },
+    {
+      "src": 5,
+      "dst": 6,
+      "bytes": 100000000,
+      "tag": 3,
+      "start_time_s": 2,
+      "strategy": 1
+    },
+    {
+      "src": 8,
+      "dst": 7,
+      "bytes": 100000000,
+      "tag": 4,
+      "start_time_s": 2,
+      "strategy": 1
+    }
+  ],
+  "network": {
+    "default_fwd_mode": 1,
+    "enable_trace": 0,
+    "qlen_mon_start_ns": 2000000000,
+    "qlen_mon_end_ns": 3000000000,
+    "qlen_mon_interval_ns": 100000,
+    "ecn_thresholds": [
+      {
+        "bandwidth": "400Gbps",
+        "kmin": 1600,
+        "kmax": 6400,
+        "pmax": 0.2
+      }
+    ]
+  }
+}

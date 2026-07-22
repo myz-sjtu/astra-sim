@@ -106,6 +106,7 @@ public:
 		  uint16_t payload_size;
 		  // SeqTsHeader
 		  uint16_t pg;
+		  uint8_t fwd_mode; //!< Forwarding mode: 0=flow-based, 1=packet-based
 		  uint32_t seq;
 		  IntHeader ih;
 	  } udp;

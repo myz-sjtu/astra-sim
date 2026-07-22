@@ -33,6 +33,7 @@ RdmaQueuePair::RdmaQueuePair(uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, ui
 	m_tag = -1;
 	snd_nxt = snd_una = 0;
 	m_pg = pg;
+	m_fwd_mode = 0;
 	m_ipid = 0;
 	m_win = 0;
 	m_baseRtt = 0;
@@ -213,6 +214,8 @@ RdmaRxQueuePair::RdmaRxQueuePair(){
 	m_nackTimer = Time(0);
 	m_milestone_rx = 0;
 	m_lastNACK = 0;
+	m_oooEnabled = false;
+	m_oooReceived.clear();
 }
 
 uint32_t RdmaRxQueuePair::GetHash(void){

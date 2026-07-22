@@ -33,7 +33,8 @@ NS_OBJECT_ENSURE_REGISTERED(SeqTsHeader);
 
 SeqTsHeader::SeqTsHeader()
     : m_seq(0),
-      m_ts(Simulator::Now().GetTimeStep())
+      m_ts(Simulator::Now().GetTimeStep()),
+      m_fwd_mode(0)
 {
     NS_LOG_FUNCTION(this);
     if (IntHeader::mode == 1)
@@ -73,6 +74,18 @@ SeqTsHeader::GetPG (void) const
 	return m_pg;
 }
 
+void
+SeqTsHeader::SetFwdMode (uint8_t fwd_mode)
+{
+	m_fwd_mode = fwd_mode;
+}
+
+uint8_t
+SeqTsHeader::GetFwdMode (void) const
+{
+	return m_fwd_mode;
+}
+
 TypeId
 SeqTsHeader::GetTypeId()
 {
@@ -104,7 +117,7 @@ SeqTsHeader::GetSerializedSize() const
 }
 
 uint32_t SeqTsHeader::GetHeaderSize(void){
-	return 6 + IntHeader::GetStaticSize();
+	return 7 + IntHeader::GetStaticSize(); // 4(seq) + 2(pg) + 1(fwd_mode) + IntHeader
 }
 
 void
@@ -114,6 +127,7 @@ SeqTsHeader::Serialize(Buffer::Iterator start) const
     Buffer::Iterator i = start;
     i.WriteHtonU32(m_seq);
     i.WriteHtonU16(m_pg);
+    i.WriteU8(m_fwd_mode);
 
     // write IntHeader
     ih.Serialize(i);
@@ -126,6 +140,7 @@ SeqTsHeader::Deserialize(Buffer::Iterator start)
     Buffer::Iterator i = start;
     m_seq = i.ReadNtohU32();
     m_pg =  i.ReadNtohU16 ();
+    m_fwd_mode = i.ReadU8();
 
     // read IntHeader
     ih.Deserialize(i);
