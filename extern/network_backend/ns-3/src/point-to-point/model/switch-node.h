@@ -1,7 +1,9 @@
 #ifndef SWITCH_NODE_H
 #define SWITCH_NODE_H
 
+#include <set>
 #include <unordered_map>
+#include <ns3/custom-header.h>
 #include <ns3/node.h>
 #include "qbb-net-device.h"
 #include "switch-mmu.h"
@@ -14,7 +16,7 @@ class Packet;
 class SwitchNode : public Node{
 public:
 	// Forwarding strategy enums
-	enum FlowStrategy { FLOW_STRATEGY_ECMP = 0 };
+	enum FlowStrategy { FLOW_STRATEGY_ECMP = 0, FLOW_STRATEGY_PATH_PINNING = 1 };
 	enum PacketStrategy { PKT_STRATEGY_RR = 0 };
 
 	static const uint32_t pCnt = 1025;	// Number of ports used
@@ -48,7 +50,9 @@ protected:
 private:
 	int GetOutDev(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevFlowECMP(Ptr<const Packet>, CustomHeader &ch);
+	int GetOutDevPathPinning(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevPktSprayRR(Ptr<const Packet>, CustomHeader &ch);
+	int GetInDev(Ptr<const Packet> p);
 	void SendToDev(Ptr<Packet>p, CustomHeader &ch);
 	static uint32_t EcmpHash(const uint8_t* key, size_t len, uint32_t seed);
 	void CheckAndSendPfc(uint32_t inDev, uint32_t qIndex);
@@ -63,6 +67,11 @@ public:
 	void ClearTable();
 	bool SwitchReceiveFromDevice(Ptr<NetDevice> device, Ptr<Packet> packet, CustomHeader &ch);
 	void SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Packet> p);
+
+	// Path pinning state. common.h fills these after shortest-path routes exist.
+	std::set<int> sideDevs_1;
+	std::set<int> sideDevs_2;
+	std::unordered_map<int, int> pinMappings;
 
 	// for approximate calc in PINT
 	int logres_shift(int b, int l);

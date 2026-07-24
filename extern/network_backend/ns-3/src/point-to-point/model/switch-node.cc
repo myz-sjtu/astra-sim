@@ -11,6 +11,7 @@
 #include "ppp-header.h"
 #include "ns3/simulator.h"
 #include "ns3/int-header.h"
+#include <algorithm>
 #include <cmath>
 
 namespace ns3 {
@@ -41,7 +42,7 @@ TypeId SwitchNode::GetTypeId (void)
 			MakeUintegerAccessor(&SwitchNode::m_maxRtt),
 			MakeUintegerChecker<uint32_t>())
 	.AddAttribute("FlowStrategy",
-			"Flow-based forwarding strategy (0=ECMP)",
+			"Flow-based forwarding strategy (0=ECMP, 1=PathPinning)",
 			UintegerValue(0),
 			MakeUintegerAccessor(&SwitchNode::m_flowStrategy),
 			MakeUintegerChecker<uint32_t>())
@@ -86,6 +87,8 @@ int SwitchNode::GetOutDev(Ptr<const Packet> p, CustomHeader &ch){
 	} else {
 		// Flow-based mode (default for UDP and all other protocols)
 		switch (m_flowStrategy) {
+			case FLOW_STRATEGY_PATH_PINNING:
+				return GetOutDevPathPinning(p, ch);
 			case FLOW_STRATEGY_ECMP:
 			default:
 				return GetOutDevFlowECMP(p, ch);
@@ -122,6 +125,39 @@ int SwitchNode::GetOutDevFlowECMP(Ptr<const Packet> p, CustomHeader &ch){
 	return nexthops[idx];
 }
 
+int SwitchNode::GetInDev(Ptr<const Packet> p) {
+	FlowIdTag t;
+	if (p->PeekPacketTag(t))
+		return t.GetFlowId();
+	return 0;
+}
+
+int SwitchNode::GetOutDevPathPinning(Ptr<const Packet> p, CustomHeader &ch){
+	auto entry = m_rtTable.find(ch.dip);
+	if (entry == m_rtTable.end())
+		return -1;
+
+	auto &nexthops = entry->second;
+	if (nexthops.size() == 0)
+		return -1;
+
+	if (nexthops.size() == 1)
+		return nexthops[0];
+
+	int inDev = GetInDev(p);
+	auto pinned = pinMappings.find(inDev);
+	if (pinned != pinMappings.end() &&
+	    std::find(nexthops.begin(), nexthops.end(), pinned->second) != nexthops.end()) {
+		return pinned->second;
+	}
+
+	// HPCC path-pinning is ingress-port based. For multi-DC topologies with
+	// multiple leaf groups per side, an ingress pin can point to a port that is
+	// not on a shortest path for the packet's destination. In that case keep
+	// forwarding destination-correct by selecting a stable candidate next hop.
+	return nexthops[inDev % nexthops.size()];
+}
+
 int SwitchNode::GetOutDevPktSprayRR(Ptr<const Packet> p, CustomHeader &ch){
 	// look up entries
 	auto entry = m_rtTable.find(ch.dip);
@@ -133,11 +169,7 @@ int SwitchNode::GetOutDevPktSprayRR(Ptr<const Packet> p, CustomHeader &ch){
 	// entry found
 	auto &nexthops = entry->second;
 
-	// get ingress port
-	FlowIdTag t;
-	uint32_t inDev = 0;
-	if (p->PeekPacketTag(t))
-		inDev = t.GetFlowId();
+	uint32_t inDev = GetInDev(p);
 
 	// round-robin among nexthops
 	uint32_t idx = m_rrCounter[inDev] % nexthops.size();
@@ -243,6 +275,9 @@ void SwitchNode::AddTableEntry(Ipv4Address &dstAddr, uint32_t intf_idx){
 
 void SwitchNode::ClearTable(){
 	m_rtTable.clear();
+	sideDevs_1.clear();
+	sideDevs_2.clear();
+	pinMappings.clear();
 }
 
 // This function can only be called in switch mode

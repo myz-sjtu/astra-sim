@@ -7,7 +7,7 @@ import json
 import os
 import re
 import sys
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +75,29 @@ def require_bool(value: Any, field: str) -> bool:
     return value
 
 
+def normalize_config_overrides(raw_overrides: Any) -> dict[str, str]:
+    if raw_overrides is None:
+        return {}
+    if not isinstance(raw_overrides, dict):
+        raise ScenarioError("network.config_overrides must be an object")
+
+    overrides: dict[str, str] = {}
+    for key, value in raw_overrides.items():
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Z0-9_]+", key):
+            raise ScenarioError(
+                "network.config_overrides keys must be uppercase ns-3 config names"
+            )
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ScenarioError(
+                f"network.config_overrides.{key} must be a string or number"
+            )
+        rendered = str(value).strip()
+        if not rendered or "\n" in rendered or "\r" in rendered:
+            raise ScenarioError(f"network.config_overrides.{key} is invalid")
+        overrides[key] = rendered
+    return overrides
+
+
 def parse_start_time_ns(raw_flow: dict[str, Any], field_prefix: str) -> int:
     has_ns = "start_time_ns" in raw_flow
     has_s = "start_time_s" in raw_flow
@@ -110,6 +133,165 @@ def parse_data_rate(value: str, field: str) -> int:
     if not bps.is_integer() or bps <= 0:
         raise ScenarioError(f"{field} must resolve to a positive integer bps value")
     return int(bps)
+
+
+def parse_physical_topology_file(
+    topology_file: Path,
+    num_npus: int,
+) -> tuple[list[int], list[int], list[int], list[dict[str, Any]], dict[str, Any]]:
+    rows: list[list[str]] = []
+    for line_number, line in enumerate(
+        topology_file.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.split()
+        if not parts[0].isdigit():
+            continue
+        rows.append(parts)
+
+    if len(rows) < 2:
+        raise ScenarioError(f"topology_file has no usable topology rows: {topology_file}")
+
+    header = rows[0]
+    if len(header) == 3:
+        node_count, switch_count, link_count = [
+            require_int(int(value), f"topology_file.header[{index}]")
+            for index, value in enumerate(header)
+        ]
+        switch_row_index = 1
+        switches = [
+            require_int(int(value), "topology_file.switch")
+            for value in rows[switch_row_index]
+        ]
+        if len(switches) != switch_count:
+            raise ScenarioError(
+                f"topology_file declares {switch_count} switches but lists "
+                f"{len(switches)}"
+            )
+        raw_link_rows = rows[switch_row_index + 1 :]
+        legacy_header = True
+        leaf_switches = None
+        spine_switches = None
+    elif len(header) == 4:
+        node_count, leaf_count, spine_count, link_count = [
+            require_int(int(value), f"topology_file.header[{index}]")
+            for index, value in enumerate(header)
+        ]
+        if len(rows) < 3:
+            raise ScenarioError("topology_file uses leaf/spine header but misses switch rows")
+        leaf_switches = [
+            require_int(int(value), "topology_file.leaf_switch")
+            for value in rows[1]
+        ]
+        spine_switches = [
+            require_int(int(value), "topology_file.spine_switch")
+            for value in rows[2]
+        ]
+        if len(leaf_switches) != leaf_count:
+            raise ScenarioError(
+                f"topology_file declares {leaf_count} leaf switches but lists "
+                f"{len(leaf_switches)}"
+            )
+        if len(spine_switches) != spine_count:
+            raise ScenarioError(
+                f"topology_file declares {spine_count} spine switches but lists "
+                f"{len(spine_switches)}"
+            )
+        switches = leaf_switches + spine_switches
+        raw_link_rows = rows[3:]
+        legacy_header = False
+    else:
+        raise ScenarioError(
+            "topology_file header must be either "
+            "'node_count switch_count link_count' or "
+            "'node_count leaf_count spine_count link_count'"
+        )
+
+    if node_count <= num_npus:
+        raise ScenarioError("topology_file node_count must exceed num_npus")
+    if node_count != num_npus + len(switches):
+        raise ScenarioError(
+            f"topology_file node_count={node_count} does not match "
+            f"num_npus + switch_count={num_npus + len(switches)}"
+        )
+    if len(raw_link_rows) != link_count:
+        raise ScenarioError(
+            f"topology_file declares {link_count} links but contains "
+            f"{len(raw_link_rows)} link rows"
+        )
+
+    links: list[dict[str, Any]] = []
+    switch_set = set(switches)
+    for index, row in enumerate(raw_link_rows):
+        if len(row) != 5:
+            raise ScenarioError(
+                f"topology_file link row {index + 1} must have five columns"
+            )
+        src = require_int(int(row[0]), f"topology_file.links[{index}].src")
+        dst = require_int(int(row[1]), f"topology_file.links[{index}].dst")
+        if src >= node_count or dst >= node_count:
+            raise ScenarioError(
+                f"topology_file.links[{index}] references node outside "
+                f"0..{node_count - 1}"
+            )
+        if src == dst:
+            raise ScenarioError(f"topology_file.links[{index}] is self-connected")
+        bandwidth = row[2]
+        latency = row[3]
+        error_rate = row[4]
+        error_rate_value = float(error_rate)
+        if not bandwidth or not latency or error_rate_value < 0:
+            raise ScenarioError(f"topology_file.links[{index}] has invalid parameters")
+        links.append(
+            {
+                "src": src,
+                "dst": dst,
+                "bandwidth": bandwidth,
+                "latency": latency,
+                "error_rate": error_rate,
+            }
+        )
+
+    if sorted(switches) != list(range(num_npus, node_count)):
+        raise ScenarioError(
+            "topology_file must use server IDs 0..num_npus-1 and contiguous "
+            "switch IDs immediately after the servers"
+        )
+
+    if legacy_header:
+        host_adjacent_switches: set[int] = set()
+        for link in links:
+            src = link["src"]
+            dst = link["dst"]
+            src_is_switch = src in switch_set
+            dst_is_switch = dst in switch_set
+            if src_is_switch == dst_is_switch:
+                continue
+            host_adjacent_switches.add(src if src_is_switch else dst)
+        leaf_switches = [switch for switch in switches if switch in host_adjacent_switches]
+        spine_switches = [switch for switch in switches if switch not in host_adjacent_switches]
+        if not leaf_switches or not spine_switches:
+            raise ScenarioError(
+                "topology_file legacy header could not infer non-empty leaf/spine sets"
+            )
+
+    link_pair_counts = Counter(
+        tuple(sorted((link["src"], link["dst"]))) for link in links
+    )
+    metadata = {
+        "source": str(topology_file),
+        "legacy_header": legacy_header,
+        "parallel_link_pairs": {
+            f"{a}-{b}": count
+            for (a, b), count in sorted(link_pair_counts.items())
+            if count > 1
+        },
+        "latency_distribution": dict(Counter(link["latency"] for link in links)),
+        "bandwidth_distribution": dict(Counter(link["bandwidth"] for link in links)),
+    }
+    return switches, leaf_switches, spine_switches, links, metadata
 
 
 def normalize_explicit_flows(
@@ -242,7 +424,7 @@ def expand_half_doubling_traffic(
                 upper = lower + offset
                 src, dst = (upper, lower) if reverse else (lower, upper)
                 phase_flow_index += 1
-                tag = phase_number * 1000 + phase_flow_index
+                tag = len(flows) + 1
                 if tag > MAX_UINT32:
                     raise ScenarioError("generated traffic tag exceeds uint32")
                 flows.append(
@@ -283,80 +465,102 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
         raise ScenarioError("name may only contain letters, numbers, '.', '_' and '-'")
 
     num_npus = require_int(raw.get("num_npus"), "num_npus", 1)
-    switches = raw.get("switches")
-    if not isinstance(switches, list):
-        raise ScenarioError("switches must be a list of node IDs")
-    switches = [require_int(value, "switch ID", num_npus) for value in switches]
-    if len(set(switches)) != len(switches):
-        raise ScenarioError("switch IDs must be unique")
-
-    leaf_switches = raw.get("leaf_switches")
-    spine_switches = raw.get("spine_switches")
-    if leaf_switches is None and spine_switches is None:
-        leaf_switches = switches
-        spine_switches = []
-    elif leaf_switches is None or spine_switches is None:
-        raise ScenarioError("leaf_switches and spine_switches must be defined together")
-    elif not isinstance(leaf_switches, list) or not isinstance(spine_switches, list):
-        raise ScenarioError("leaf_switches and spine_switches must be lists")
-    else:
-        leaf_switches = [require_int(value, "leaf switch ID", num_npus) for value in leaf_switches]
-        spine_switches = [require_int(value, "spine switch ID", num_npus) for value in spine_switches]
-    if sorted(leaf_switches + spine_switches) != sorted(switches):
-        raise ScenarioError("leaf_switches plus spine_switches must exactly match switches")
-    if set(leaf_switches) & set(spine_switches):
-        raise ScenarioError("leaf_switches and spine_switches must not overlap")
-
-    expected_switches = list(range(num_npus, num_npus + len(switches)))
-    if sorted(switches) != expected_switches:
-        raise ScenarioError(
-            "server IDs must be 0..num_npus-1 and switch IDs must be contiguous "
-            "immediately after the server IDs"
-        )
-
-    node_count = num_npus + len(switches)
-    link_defaults = raw.get("link_defaults", {})
-    if not isinstance(link_defaults, dict):
-        raise ScenarioError("link_defaults must be an object")
-    default_bandwidth = str(link_defaults.get("bandwidth", "100Gbps"))
-    default_latency = str(link_defaults.get("latency", "1000ns"))
-    default_error_rate = float(link_defaults.get("error_rate", 0.0))
-
-    raw_links = raw.get("links")
-    if not isinstance(raw_links, list) or not raw_links:
-        raise ScenarioError("links must be a non-empty list")
-
-    links: list[dict[str, Any]] = []
-    adjacency: dict[int, set[int]] = defaultdict(set)
-    for index, raw_link in enumerate(raw_links):
-        if not isinstance(raw_link, dict):
-            raise ScenarioError(f"links[{index}] must be an object")
-        src = require_int(raw_link.get("src"), f"links[{index}].src")
-        dst = require_int(raw_link.get("dst"), f"links[{index}].dst")
-        if src >= node_count or dst >= node_count:
-            raise ScenarioError(f"links[{index}] references a node outside 0..{node_count - 1}")
-        if src == dst:
-            raise ScenarioError(f"links[{index}] cannot connect a node to itself")
-
-        bandwidth = str(raw_link.get("bandwidth", default_bandwidth))
-        latency = str(raw_link.get("latency", default_latency))
-        error_rate = float(raw_link.get("error_rate", default_error_rate))
-        count = require_int(raw_link.get("count", 1), f"links[{index}].count", 1)
-        if not bandwidth or not latency or error_rate < 0:
-            raise ScenarioError(f"links[{index}] has invalid link parameters")
-
-        for _ in range(count):
-            links.append(
-                {
-                    "src": src,
-                    "dst": dst,
-                    "bandwidth": bandwidth,
-                    "latency": latency,
-                    "error_rate": error_rate,
-                }
+    topology_metadata: dict[str, Any] | None = None
+    topology_file = raw.get("topology_file")
+    if topology_file is not None:
+        if not isinstance(topology_file, str):
+            raise ScenarioError("topology_file must be a path string")
+        forbidden_fields = [
+            field
+            for field in ("switches", "leaf_switches", "spine_switches", "links")
+            if field in raw
+        ]
+        if forbidden_fields:
+            raise ScenarioError(
+                "topology_file cannot be combined with explicit topology fields: "
+                + ", ".join(forbidden_fields)
             )
-        adjacency[src].add(dst)
-        adjacency[dst].add(src)
+        switches, leaf_switches, spine_switches, links, topology_metadata = (
+            parse_physical_topology_file(resolve_repo_path(topology_file), num_npus)
+        )
+        node_count = num_npus + len(switches)
+    else:
+        switches = raw.get("switches")
+        if not isinstance(switches, list):
+            raise ScenarioError("switches must be a list of node IDs")
+        switches = [require_int(value, "switch ID", num_npus) for value in switches]
+        if len(set(switches)) != len(switches):
+            raise ScenarioError("switch IDs must be unique")
+
+        leaf_switches = raw.get("leaf_switches")
+        spine_switches = raw.get("spine_switches")
+        if leaf_switches is None and spine_switches is None:
+            leaf_switches = switches
+            spine_switches = []
+        elif leaf_switches is None or spine_switches is None:
+            raise ScenarioError("leaf_switches and spine_switches must be defined together")
+        elif not isinstance(leaf_switches, list) or not isinstance(spine_switches, list):
+            raise ScenarioError("leaf_switches and spine_switches must be lists")
+        else:
+            leaf_switches = [require_int(value, "leaf switch ID", num_npus) for value in leaf_switches]
+            spine_switches = [require_int(value, "spine switch ID", num_npus) for value in spine_switches]
+        if sorted(leaf_switches + spine_switches) != sorted(switches):
+            raise ScenarioError("leaf_switches plus spine_switches must exactly match switches")
+        if set(leaf_switches) & set(spine_switches):
+            raise ScenarioError("leaf_switches and spine_switches must not overlap")
+
+        expected_switches = list(range(num_npus, num_npus + len(switches)))
+        if sorted(switches) != expected_switches:
+            raise ScenarioError(
+                "server IDs must be 0..num_npus-1 and switch IDs must be contiguous "
+                "immediately after the server IDs"
+            )
+
+        node_count = num_npus + len(switches)
+        link_defaults = raw.get("link_defaults", {})
+        if not isinstance(link_defaults, dict):
+            raise ScenarioError("link_defaults must be an object")
+        default_bandwidth = str(link_defaults.get("bandwidth", "100Gbps"))
+        default_latency = str(link_defaults.get("latency", "1000ns"))
+        default_error_rate = float(link_defaults.get("error_rate", 0.0))
+
+        raw_links = raw.get("links")
+        if not isinstance(raw_links, list) or not raw_links:
+            raise ScenarioError("links must be a non-empty list")
+
+        links = []
+        for index, raw_link in enumerate(raw_links):
+            if not isinstance(raw_link, dict):
+                raise ScenarioError(f"links[{index}] must be an object")
+            src = require_int(raw_link.get("src"), f"links[{index}].src")
+            dst = require_int(raw_link.get("dst"), f"links[{index}].dst")
+            if src >= node_count or dst >= node_count:
+                raise ScenarioError(f"links[{index}] references a node outside 0..{node_count - 1}")
+            if src == dst:
+                raise ScenarioError(f"links[{index}] cannot connect a node to itself")
+
+            bandwidth = str(raw_link.get("bandwidth", default_bandwidth))
+            latency = str(raw_link.get("latency", default_latency))
+            error_rate = float(raw_link.get("error_rate", default_error_rate))
+            count = require_int(raw_link.get("count", 1), f"links[{index}].count", 1)
+            if not bandwidth or not latency or error_rate < 0:
+                raise ScenarioError(f"links[{index}] has invalid link parameters")
+
+            for _ in range(count):
+                links.append(
+                    {
+                        "src": src,
+                        "dst": dst,
+                        "bandwidth": bandwidth,
+                        "latency": latency,
+                        "error_rate": error_rate,
+                    }
+                )
+
+    adjacency: dict[int, set[int]] = defaultdict(set)
+    for link in links:
+        adjacency[link["src"]].add(link["dst"])
+        adjacency[link["dst"]].add(link["src"])
 
     visited = {0}
     queue = deque([0])
@@ -391,6 +595,15 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
         if flow["fwd_mode"] is None:
             flow["fwd_mode"] = default_fwd_mode
 
+    flow_strategy = require_int(network.get("flow_strategy", 0), "network.flow_strategy")
+    if flow_strategy not in (0, 1):
+        raise ScenarioError("network.flow_strategy must be 0=ECMP or 1=PathPinning")
+    packet_strategy = require_int(
+        network.get("packet_strategy", 0), "network.packet_strategy"
+    )
+    if packet_strategy != 0:
+        raise ScenarioError("network.packet_strategy currently supports only 0=RR")
+
     enable_trace = require_int(network.get("enable_trace", 0), "network.enable_trace")
     if enable_trace not in (0, 1):
         raise ScenarioError("network.enable_trace must be 0 or 1")
@@ -407,6 +620,8 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
     )
     if qlen_mon_end_ns < qlen_mon_start_ns:
         raise ScenarioError("network.qlen_mon_end_ns must be >= qlen_mon_start_ns")
+
+    config_overrides = normalize_config_overrides(network.get("config_overrides"))
 
     ecn_thresholds = None
     raw_ecn_thresholds = network.get("ecn_thresholds")
@@ -459,15 +674,19 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
         "leaf_switches": leaf_switches,
         "spine_switches": spine_switches,
         "links": links,
+        "topology_metadata": topology_metadata,
         "flows": flows,
         "traffic": traffic,
         "network": {
             "default_fwd_mode": default_fwd_mode,
+            "flow_strategy": flow_strategy,
+            "packet_strategy": packet_strategy,
             "enable_trace": enable_trace,
             "qlen_mon_start_ns": qlen_mon_start_ns,
             "qlen_mon_end_ns": qlen_mon_end_ns,
             "qlen_mon_interval_ns": qlen_mon_interval_ns,
             "ecn_thresholds": ecn_thresholds,
+            "config_overrides": config_overrides,
         },
     }
 
@@ -660,9 +879,11 @@ def rewrite_network_config(
 
     missing = sorted(set(replacements) - seen)
     if missing:
-        raise ScenarioError(
-            f"base network config is missing required keys: {', '.join(missing)}"
-        )
+        if output_lines and output_lines[-1] != "":
+            output_lines.append("")
+        output_lines.append("# Added by generate_custom_inputs.py")
+        for key in missing:
+            output_lines.append(f"{key} {replacements[key]}")
     output_config.write_text("\n".join(output_lines) + "\n", encoding="utf-8")
 
 
@@ -711,6 +932,8 @@ def generate(
         "QLEN_MON_END": str(network["qlen_mon_end_ns"]),
         "QLEN_MON_INTERVAL": str(network["qlen_mon_interval_ns"]),
         "DEFAULT_FWD_MODE": str(network["default_fwd_mode"]),
+        "FLOW_STRATEGY": str(network["flow_strategy"]),
+        "PACKET_STRATEGY": str(network["packet_strategy"]),
         "ENABLE_TRACE": str(network["enable_trace"]),
     }
     if network["ecn_thresholds"] is not None:
@@ -731,6 +954,7 @@ def generate(
                 ),
             }
         )
+    replacements.update(network["config_overrides"])
     rewrite_network_config(base_network_config, network_config_path, replacements)
 
     manifest = {

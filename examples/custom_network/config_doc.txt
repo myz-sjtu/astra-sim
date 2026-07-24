@@ -1,0 +1,85 @@
+ENABLE_PFC 1 {0: disable PFC, 1: enable PFC on QbbNetDevice}
+ENABLE_QCN 1 {0: disable QCN/ECN marking, 1: enable QCN/ECN marking}
+USE_DYNAMIC_PFC_THRESHOLD 1 {0: static PFC threshold, 1: dynamic PFC threshold}
+PAUSE_TIME 5 {PFC pause time configured on QbbNetDevice}
+
+PACKET_PAYLOAD_SIZE 1000 {RDMA data payload size in bytes; also used for route txDelay estimates}
+
+TOPOLOGY_FILE ../../../examples/custom_network/generated/<name>/topology.txt {input physical topology file, relative to extern/network_backend/ns-3}
+FLOW_FILE ../../../examples/custom_network/generated/<name>/flow.txt {input flow file generated from scenario traffic/workload}
+TRACE_FILE ../../../examples/custom_network/generated/<name>/trace.txt {input list of node IDs for packet-level tracing}
+TRACE_OUTPUT_FILE scratch/output/<name>/mix.tr {output packet-level trace file}
+FCT_OUTPUT_FILE scratch/output/<name>/fct.txt {output flow completion time file}
+PFC_OUTPUT_FILE scratch/output/<name>/pfc.txt {output PFC event file}
+QLEN_MON_FILE scratch/output/<name>/qlen.txt {output queue length monitor file}
+
+QLEN_MON_START 2000000000 {start time for queue length monitoring, in ns}
+QLEN_MON_END 3000000000 {end time for queue length monitoring, in ns}
+QLEN_MON_INTERVAL 100000 {queue length monitoring interval, in ns}
+
+SIMULATOR_STOP_TIME 40000000000000.00 {legacy field parsed by config reader; ASTRA-sim completion normally stops simulation}
+
+CC_MODE 12 {congestion control mode. Common values: 1 DCQCN, 3 HPCC, 7 TIMELY, 8 DCTCP, 10 HPCC-PINT, 12 project-specific mode}
+ALPHA_RESUME_INTERVAL 1 {DCQCN alpha resume interval}
+RATE_DECREASE_INTERVAL 4 {DCQCN rate decrease check interval}
+CLAMP_TARGET_RATE 0 {0: do not clamp DCQCN target rate, 1: clamp after decreases}
+RP_TIMER 900 {DCQCN rate increase timer}
+EWMA_GAIN 0.00390625 {EWMA gain for DCQCN/DCTCP}
+FAST_RECOVERY_TIMES 1 {DCQCN fast recovery increase count}
+RATE_AI 50Mb/s {additive increase rate}
+RATE_HAI 100Mb/s {hyper additive increase rate}
+MIN_RATE 100Mb/s {minimum allowed throttled rate}
+DCTCP_RATE_AI 1000Mb/s {DCTCP additive increase rate}
+
+ERROR_RATE_PER_LINK 0.0000 {default per-link packet error rate; per-topology link row can override with its own error_rate}
+L2_CHUNK_SIZE 4000 {layer-2 chunk size; 0 disables chunk mode}
+L2_ACK_INTERVAL 1 {number of packets between ACKs; 1 means ACK every packet}
+L2_BACK_TO_ZERO 0 {0: go-back-0 behavior disabled, 1: go-back-to-zero enabled}
+
+HAS_WIN 1 {0: no RDMA send window, 1: use RDMA send window}
+GLOBAL_T 0 {0: use per-pair RTT/BDP, 1: use max RTT/BDP globally}
+VAR_WIN 1 {0: fixed maximum window, 1: variable window}
+FAST_REACT 1 {0: react once per RTT, 1: react per feedback packet}
+U_TARGET 0.95 {target utilization for HPCC-style control}
+MI_THRESH 0 {HPCC maxStage / MI threshold}
+INT_MULTI 1 {INT header multiplier for txBytes and qLen units}
+MULTI_RATE 0 {0: one rate for all hops, 1: one rate per hop}
+SAMPLE_FEEDBACK 0 {0: INT feedback per packet, 1: sampled feedback}
+PINT_LOG_BASE 1.05 {HPCC-PINT logarithmic encoding base}
+PINT_PROB 1.0 {fraction of packets carrying PINT feedback}
+NIC_TOTAL_PAUSE_TIME 0 {number of PCIe pause cycles allowed by NIC-side pause simulation}
+
+RATE_BOUND 1 {0: no rate limiter, 1: enable rate limiter}
+ACK_HIGH_PRIO 0 {0: ACK shares data priority, 1: ACK uses high priority queue}
+
+FLOW_STRATEGY 1 {flow-based switch forwarding: 0 ECMP, 1 PathPinning}
+PACKET_STRATEGY 0 {packet-based switch forwarding: 0 round-robin packet spray}
+DEFAULT_FWD_MODE 0 {default per-flow forwarding mode: 0 flow-based forwarding, 1 packet-spray forwarding}
+
+LINK_DOWN 0 0 0 {link_down_time_us node_a node_b. If time > 0, all up links between node_a and node_b are taken down at 2s + time}
+ENABLE_TRACE 0 {0: disable packet-level tracing, 1: enable tracing for TRACE_FILE nodes}
+
+KMAX_MAP 2 200000000000 2400 400000000000 3200 {map from link bandwidth in bps to ECN kmax threshold}
+KMIN_MAP 2 200000000000 600 400000000000 800 {map from link bandwidth in bps to ECN kmin threshold}
+PMAX_MAP 2 200000000000 0.2 400000000000 0.2 {map from link bandwidth in bps to ECN pmax probability}
+
+BUFFER_SIZE 32 {per-switch MMU buffer size in MB}
+HEADROOM_FACTOR 3 {PFC headroom = link_rate * link_delay / 8 / 1e9 * HEADROOM_FACTOR}
+
+TOPOLOGY_FORMAT_LEAF_SPINE
+70 4 2 112 {node_count leaf_switch_count spine_switch_count link_count}
+64 65 66 67 {leaf switch node IDs}
+68 69 {spine switch node IDs}
+0 64 200Gbps 500ns 0.000000 {src dst data_rate link_delay error_rate}
+
+TOPOLOGY_FORMAT_LEGACY
+70 6 112 {node_count switch_count link_count}
+64 65 66 67 68 69 {switch node IDs; leaf/spine is inferred from host adjacency}
+0 64 200Gbps 500ns 0.000000 {src dst data_rate link_delay error_rate}
+
+NOTES
+Config files under examples/custom_network/config_hpcc_case*.txt are base templates.
+generate_custom_inputs.py rewrites TOPOLOGY_FILE, FLOW_FILE, TRACE_FILE, output paths, FLOW_STRATEGY, DEFAULT_FWD_MODE, monitor times, and ECN maps into generated/<name>/network_config.txt.
+scenario.network.config_overrides can rewrite raw config keys such as ENABLE_PFC, ENABLE_QCN, CC_MODE, ACK_HIGH_PRIO, and USE_DYNAMIC_PFC_THRESHOLD.
+Use FLOW_STRATEGY 1 with DEFAULT_FWD_MODE 0 to exercise HPCC-Dev-style path pinning.
+Use DEFAULT_FWD_MODE 1 to exercise packet spray; packet spray uses PACKET_STRATEGY.

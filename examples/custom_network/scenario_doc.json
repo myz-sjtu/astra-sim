@@ -1,0 +1,119 @@
+{
+  "_doc": "Reference scenario for examples/custom_network/generate_custom_inputs.py. This file is valid JSON; fields whose names start with '_' are documentation only and are ignored by the generator.",
+  "name": "scenario_doc_example",
+  "_name": "Output scenario name. The generator writes files under the chosen output directory and uses this name for ns-3 scratch/output/<name> paths.",
+  "num_npus": 64,
+  "_num_npus": "Number of host/rank nodes. Host IDs must be 0..num_npus-1.",
+  "topology_file": "examples/custom_network/topology/clos_2dc_64_long_topo_mul.txt",
+  "_topology_file": "Optional physical topology input. If present, do not also define switches, leaf_switches, spine_switches, or links. Supports legacy header and leaf/spine header.",
+  "_explicit_topology_alternative": {
+    "_doc": "Instead of topology_file, define switches plus links directly in this scenario. switch IDs must be contiguous after host IDs.",
+    "switches": [64, 65, 66, 67, 68, 69],
+    "leaf_switches": [64, 65, 66, 67],
+    "spine_switches": [68, 69],
+    "link_defaults": {
+      "bandwidth": "400Gbps",
+      "latency": "500ns",
+      "error_rate": 0.0
+    },
+    "links": [
+      {
+        "src": 0,
+        "dst": 64,
+        "bandwidth": "200Gbps",
+        "latency": "500ns",
+        "error_rate": 0.0,
+        "count": 1
+      },
+      {
+        "src": 68,
+        "dst": 69,
+        "bandwidth": "400Gbps",
+        "latency": "500us",
+        "error_rate": 0.0,
+        "count": 16
+      }
+    ]
+  },
+  "traffic": {
+    "_doc": "Exactly one of traffic or flows must be present. traffic generates Chakra workload plus HPCC-style flow.txt rows.",
+    "pattern": "half_doubling_allreduce",
+    "_pattern": "Currently supported generated pattern: half_doubling_allreduce.",
+    "offsets": [32, 16, 8, 4, 2, 1],
+    "_offsets": "Allreduce pair distances by phase. First offset must be num_npus / 2; each next offset must halve the previous one.",
+    "bytes_per_flow": 500000000,
+    "_bytes_per_flow": "Payload bytes per generated send/recv flow. Must fit MsgEvent int limit.",
+    "include_reverse": true,
+    "_include_reverse": "true adds reverse phases after the forward half-doubling phases.",
+    "phase_sync": "per_rank",
+    "_phase_sync": "per_rank chains each rank's generated communication nodes by phase."
+  },
+  "_flows_alternative": [
+    {
+      "_doc": "Use top-level flows instead of traffic for explicit point-to-point messages.",
+      "src": 0,
+      "dst": 63,
+      "bytes": 10000,
+      "tag": 1,
+      "start_time_ns": 0,
+      "strategy": 0
+    },
+    {
+      "_doc": "start_time can also be start_time_s or legacy start_time in seconds. strategy/fwd_mode is 0 flow-based, 1 packet-spray.",
+      "src": 63,
+      "dst": 0,
+      "bytes": 10000,
+      "tag": 2,
+      "start_time_s": 0.000001,
+      "fwd_mode": 0
+    }
+  ],
+  "network": {
+    "_doc": "Network block controls generated network_config.txt values.",
+    "default_fwd_mode": 0,
+    "_default_fwd_mode": "Default per-flow forwarding mode. 0 flow-based, 1 packet-spray. Explicit flows can override with strategy/fwd_mode.",
+    "flow_strategy": 1,
+    "_flow_strategy": "Flow-based switch strategy. 0 ECMP, 1 PathPinning. Use 1 for HPCC-Dev long-distance path pinning.",
+    "packet_strategy": 0,
+    "_packet_strategy": "Packet-based switch strategy. Currently only 0 round-robin packet spray is supported.",
+    "enable_trace": 0,
+    "_enable_trace": "0 disables packet-level tracing; 1 enables tracing for nodes in generated trace.txt.",
+    "qlen_mon_start_ns": 2000000000,
+    "qlen_mon_end_ns": 3000000000,
+    "qlen_mon_interval_ns": 100000,
+    "_qlen_monitor": "Queue length monitor timing in ns.",
+    "config_overrides": {
+      "ENABLE_PFC": 1,
+      "ENABLE_QCN": 1,
+      "CC_MODE": 1
+    },
+    "_config_overrides": "Optional raw network_config.txt overrides. Use this for base config keys such as ENABLE_PFC, ENABLE_QCN, CC_MODE, ACK_HIGH_PRIO, or USE_DYNAMIC_PFC_THRESHOLD.",
+    "ecn_thresholds": [
+      {
+        "bandwidth": "200Gbps",
+        "kmin": 600,
+        "kmax": 2400,
+        "pmax": 0.2
+      },
+      {
+        "bandwidth": "400Gbps",
+        "kmin": 800,
+        "kmax": 3200,
+        "pmax": 0.2
+      }
+    ],
+    "_ecn_thresholds": "Each link bandwidth in the scenario/topology must have one threshold entry. The generator converts these into KMIN_MAP, KMAX_MAP, and PMAX_MAP."
+  },
+  "_generated_files": {
+    "topology.txt": "Physical topology consumed by extern/network_backend/ns-3/scratch/common.h.",
+    "flow.txt": "HPCC-style flow rows: src dst pg dport bytes start_time_seconds fwd_mode.",
+    "trace.txt": "Node IDs whose packet-level events are traced when ENABLE_TRACE=1.",
+    "network_config.txt": "Config file passed to --network-configuration.",
+    "logical_topology.json": "ASTRA-sim logical dims for ranks.",
+    "workload/custom_traffic.<rank>.et": "Chakra workload files generated from traffic/flows.",
+    "traffic_manifest.json": "Expanded traffic metadata for audit/debug.",
+    "run_manifest.json": "Resolved paths and runnable command arguments."
+  },
+  "_example_generate_command": "python3 examples/custom_network/generate_custom_inputs.py --scenario examples/custom_network/scenario_hpcc_2dc_64_clos.json --output-dir examples/custom_network/generated/hpcc_2dc_64_clos",
+  "_example_run_command_from_ns3": "./ns3 run \"AstraSimNetwork --workload-configuration=../../../examples/custom_network/generated/hpcc_2dc_64_clos/workload/custom_traffic --system-configuration=../../../examples/system/native_collectives/Ring_4chunks.json --network-configuration=../../../examples/custom_network/generated/hpcc_2dc_64_clos/network_config.txt --remote-memory-configuration=../../../examples/remote_memory/analytical/no_memory_expansion.json --logical-topology-configuration=../../../examples/custom_network/generated/hpcc_2dc_64_clos/logical_topology.json --comm-group-configuration=empty\""
+}

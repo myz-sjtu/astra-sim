@@ -31,6 +31,12 @@ NOTES = {
         "# note:",
         "# stdout/stderr captured from the ASTRA-sim ns-3 run.",
     ],
+    "throughput_summary.txt": [
+        "# columns:",
+        "# metric value unit",
+        "# aggregate_payload_throughput_gbps = sum(payload_bytes) * 8 / makespan_ns.",
+        "# flow_throughput_gbps metrics come from fct.txt column 11 and include packet headers.",
+    ],
 }
 
 
