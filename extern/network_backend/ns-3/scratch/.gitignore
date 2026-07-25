@@ -4,5 +4,6 @@
 
 !nested-subdir/
 !subdir/
+!common.h
 !scratch-simulator.cc
 !CMakeLists.txt
