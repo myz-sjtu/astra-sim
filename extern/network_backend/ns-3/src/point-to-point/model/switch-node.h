@@ -1,8 +1,12 @@
 #ifndef SWITCH_NODE_H
 #define SWITCH_NODE_H
 
+#include <tuple>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 #include <ns3/node.h>
+#include "ns3/arn-header.h"
 #include "qbb-net-device.h"
 #include "switch-mmu.h"
 #include "pint.h"
@@ -45,6 +49,13 @@ protected:
 	uint32_t m_flowStrategy;
 	uint32_t m_packetStrategy;
 
+	// ARN congestion notification configuration.
+	bool m_arn;
+	bool m_isSpine;
+	bool m_isLeaf;
+	Time m_arnInterval;
+	uint64_t m_congestionQlen;
+
 private:
 	int GetOutDev(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevFlowECMP(Ptr<const Packet>, CustomHeader &ch);
@@ -53,15 +64,38 @@ private:
 	static uint32_t EcmpHash(const uint8_t* key, size_t len, uint32_t seed);
 	void CheckAndSendPfc(uint32_t inDev, uint32_t qIndex);
 	void CheckAndSendResume(uint32_t inDev, uint32_t qIndex);
+	void CheckAndSendArn(uint32_t inDev, uint32_t outDev, uint32_t qIndex, Ptr<Packet> p, CustomHeader &ch);
+	uint32_t GetQLevel(uint64_t qlen) const;
+	bool ResolveLeafNode(uint32_t ip, Ptr<Node>& leafNode) const;
+	bool IsSpineIngress(uint32_t inDev) const;
+	bool HasHostNeighbor() const;
+	bool HasSwitchNeighbor() const;
+	bool IsLeafSwitch();
+	bool IsSpineSwitch();
+
+	static std::unordered_map<uint32_t, Ptr<Node> > s_ipToLeafId;
 public:
 	Ptr<SwitchMmu> m_mmu;
+	std::unordered_map<uint32_t, Ptr<Node> > m_ipToLeafId;
+	std::unordered_map<uint32_t, uint32_t> m_nodeToIf;
+	std::unordered_map<uint32_t, Ptr<Node> > m_ifToNode;
+	std::unordered_map<ArnHeader::FlowKey, ArnHeader::FlowInfo, ArnHeader::FlowKeyHash> m_arn_event;
+
+	typedef std::unordered_map<uint32_t, ArnHeader::FlowInfo> port_table_profile;
+	typedef std::unordered_map<uint32_t, uint64_t> arn_effect_ts;
+	typedef std::unordered_map<uint32_t, uint64_t> arn_clear_ts;
+	std::unordered_map<uint32_t, std::tuple<port_table_profile, arn_effect_ts, arn_clear_ts> > m_arn_receive;
+	std::vector<uint64_t> q_level;
 
 	static TypeId GetTypeId (void);
 	SwitchNode();
 	void SetEcmpSeed(uint32_t seed);
 	void AddTableEntry(Ipv4Address &dstAddr, uint32_t intf_idx);
+	void AddNodeEntry(uint32_t intf_idx, Ptr<Node> node);
+	void AddInterfaceEntry(uint32_t node_id, uint32_t intf_idx);
 	void ClearTable();
 	bool SwitchReceiveFromDevice(Ptr<NetDevice> device, Ptr<Packet> packet, CustomHeader &ch);
+	bool SwitchReceiveArn(Ptr<NetDevice> device, Ptr<Packet> packet, CustomHeader &ch, uint32_t congestedPath);
 	void SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Packet> p);
 
 	// for approximate calc in PINT

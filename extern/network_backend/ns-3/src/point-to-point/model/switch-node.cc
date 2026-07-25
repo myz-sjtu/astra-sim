@@ -1,6 +1,7 @@
 #include "ns3/ipv4.h"
 #include "ns3/packet.h"
 #include "ns3/ipv4-header.h"
+#include "ns3/arn-header.h"
 #include "ns3/pause-header.h"
 #include "ns3/flow-id-tag.h"
 #include "ns3/boolean.h"
@@ -12,8 +13,32 @@
 #include "ns3/simulator.h"
 #include "ns3/int-header.h"
 #include <cmath>
+#include <iostream>
 
 namespace ns3 {
+
+namespace {
+
+const char* ArnTypeName(uint32_t arnType) {
+	switch (arnType) {
+	case ArnHeader::REMOTE_ARN:
+		return "REMOTE_ARN";
+	case ArnHeader::REMOTE_CLEAR:
+		return "REMOTE_CLEAR";
+	case ArnHeader::REMOTE_PERIOD:
+		return "REMOTE_PERIOD";
+	case ArnHeader::LOCAL_ARN:
+		return "LOCAL_ARN";
+	case ArnHeader::LOCAL_CLEAR:
+		return "LOCAL_CLEAR";
+	default:
+		return "UNKNOWN_ARN";
+	}
+}
+
+} // namespace
+
+std::unordered_map<uint32_t, Ptr<Node> > SwitchNode::s_ipToLeafId;
 
 TypeId SwitchNode::GetTypeId (void)
 {
@@ -50,6 +75,31 @@ TypeId SwitchNode::GetTypeId (void)
 			UintegerValue(0),
 			MakeUintegerAccessor(&SwitchNode::m_packetStrategy),
 			MakeUintegerChecker<uint32_t>())
+	.AddAttribute("ArnEnabled",
+			"Enable ARN congestion notification for packet spray flows",
+			BooleanValue(true),
+			MakeBooleanAccessor(&SwitchNode::m_arn),
+			MakeBooleanChecker())
+	.AddAttribute("IsSpine",
+			"Whether this switch is a spine switch",
+			BooleanValue(false),
+			MakeBooleanAccessor(&SwitchNode::m_isSpine),
+			MakeBooleanChecker())
+	.AddAttribute("IsLeaf",
+			"Whether this switch is a leaf switch",
+			BooleanValue(false),
+			MakeBooleanAccessor(&SwitchNode::m_isLeaf),
+			MakeBooleanChecker())
+	.AddAttribute("ArnInterval",
+			"Minimum interval between ARN notifications",
+			TimeValue(Time::FromInteger(10000, Time::NS)),
+			MakeTimeAccessor(&SwitchNode::m_arnInterval),
+			MakeTimeChecker())
+	.AddAttribute("CongestionQueueLength",
+			"Queue length threshold in bytes for ARN trigger/clear",
+			UintegerValue(5000000),
+			MakeUintegerAccessor(&SwitchNode::m_congestionQlen),
+			MakeUintegerChecker<uint64_t>())
   ;
   return tid;
 }
@@ -72,6 +122,10 @@ SwitchNode::SwitchNode(){
 		m_rrCounter[i] = 0;
 	m_flowStrategy = 0;
 	m_packetStrategy = 0;
+	m_arn = true;
+	m_isSpine = false;
+	m_isLeaf = false;
+	m_congestionQlen = 5000000;
 }
 
 int SwitchNode::GetOutDev(Ptr<const Packet> p, CustomHeader &ch){
@@ -160,6 +214,255 @@ void SwitchNode::CheckAndSendResume(uint32_t inDev, uint32_t qIndex){
 	}
 }
 
+uint32_t SwitchNode::GetQLevel(uint64_t qlen) const {
+	if (q_level.empty()) {
+		return qlen > m_congestionQlen ? 1 : 0;
+	}
+	for (uint32_t i = 1; i < q_level.size(); i++) {
+		if (qlen >= q_level[i - 1] && qlen < q_level[i]) {
+			return i;
+		}
+	}
+	return q_level.size();
+}
+
+bool SwitchNode::ResolveLeafNode(uint32_t ip, Ptr<Node>& leafNode) const {
+	auto it = m_ipToLeafId.find(ip);
+	if (it != m_ipToLeafId.end() && it->second != nullptr) {
+		leafNode = it->second;
+		return true;
+	}
+	auto globalIt = s_ipToLeafId.find(ip);
+	if (globalIt != s_ipToLeafId.end() && globalIt->second != nullptr) {
+		leafNode = globalIt->second;
+		return true;
+	}
+	return false;
+}
+
+bool SwitchNode::IsSpineIngress(uint32_t inDev) const {
+	auto nodeIt = m_ifToNode.find(inDev);
+	if (nodeIt == m_ifToNode.end() || nodeIt->second == nullptr) {
+		return false;
+	}
+	return nodeIt->second->GetNodeType() != 0;
+}
+
+bool SwitchNode::HasHostNeighbor() const {
+	for (const auto &entry : m_ifToNode) {
+		if (entry.second != nullptr && entry.second->GetNodeType() == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool SwitchNode::HasSwitchNeighbor() const {
+	for (const auto &entry : m_ifToNode) {
+		if (entry.second != nullptr && entry.second->GetNodeType() != 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool SwitchNode::IsSpineSwitch() {
+	if (m_isSpine || GetNodeType() == 2) {
+		return true;
+	}
+	if (m_isLeaf) {
+		return false;
+	}
+	return HasSwitchNeighbor() && !HasHostNeighbor();
+}
+
+bool SwitchNode::IsLeafSwitch() {
+	if (m_isLeaf) {
+		return true;
+	}
+	if (m_isSpine || GetNodeType() == 2) {
+		return false;
+	}
+	return HasHostNeighbor() || GetNodeType() == 1;
+}
+
+void SwitchNode::CheckAndSendArn(uint32_t inDev, uint32_t outDev, uint32_t qIndex, Ptr<Packet> p, CustomHeader &ch) {
+	if (!m_arn || ch.l3Prot != 0x11 || ch.udp.fwd_mode != 1 || qIndex == 0) {
+		return;
+	}
+
+	bool isSpine = IsSpineSwitch();
+	bool isLeaf = !isSpine && IsLeafSwitch();
+
+	if (isLeaf && IsSpineIngress(inDev)) {
+		return;
+	}
+
+	Ptr<Node> srcLeaf;
+	Ptr<Node> dstLeaf;
+	bool hasLeafMapping = ResolveLeafNode(ch.sip, srcLeaf) && ResolveLeafNode(ch.dip, dstLeaf);
+	if (!hasLeafMapping) {
+		if (!isSpine) {
+			return;
+		}
+		auto srcLeafIt = m_ifToNode.find(inDev);
+		auto dstLeafIt = m_ifToNode.find(outDev);
+		if (srcLeafIt == m_ifToNode.end() || dstLeafIt == m_ifToNode.end() ||
+			srcLeafIt->second == nullptr || dstLeafIt->second == nullptr ||
+			srcLeafIt->second->GetNodeType() == 0 || dstLeafIt->second->GetNodeType() == 0) {
+			return;
+		}
+		srcLeaf = srcLeafIt->second;
+		dstLeaf = dstLeafIt->second;
+	}
+
+	uint32_t srcIfId = inDev;
+	uint32_t dstIfId = outDev;
+	if (isSpine) {
+		Ptr<SwitchNode> srcLeafSwitch = DynamicCast<SwitchNode>(srcLeaf);
+		if (srcLeafSwitch == nullptr) {
+			return;
+		}
+		auto srcIf = srcLeafSwitch->m_nodeToIf.find(GetId());
+		if (srcIf == srcLeafSwitch->m_nodeToIf.end()) {
+			return;
+		}
+		srcIfId = srcIf->second;
+	}
+
+	ArnHeader::FlowKey flowKey;
+	flowKey.src = dstLeaf->GetId();
+	flowKey.dst = srcLeaf->GetId();
+	flowKey.sport = isSpine ? srcIfId : dstIfId;
+	flowKey.dport = isSpine ? dstIfId : srcIfId;
+
+	ArnHeader::FlowInfo flowInfo;
+	flowInfo.q_len = m_mmu->egress_bytes[outDev][qIndex];
+	flowInfo.q_level = GetQLevel(flowInfo.q_len);
+	flowInfo.load_level = 0;
+	flowInfo.ts = Simulator::Now().GetTimeStep();
+
+	uint64_t clearThreshold = m_congestionQlen - (m_congestionQlen >> 3);
+	uint64_t arnInterval = static_cast<uint64_t>(m_arnInterval.GetTimeStep());
+	auto eventIt = m_arn_event.find(flowKey);
+	uint32_t currentType = isSpine ? ArnHeader::REMOTE_CLEAR : ArnHeader::LOCAL_CLEAR;
+	uint64_t lastTs = flowInfo.ts > arnInterval ? flowInfo.ts - arnInterval : 0;
+	if (eventIt != m_arn_event.end()) {
+		currentType = eventIt->second.arn_type;
+		lastTs = eventIt->second.ts;
+	}
+
+	bool shouldTrigger = flowInfo.q_len > m_congestionQlen &&
+		((isSpine && currentType == ArnHeader::REMOTE_CLEAR) ||
+		 (isLeaf && currentType == ArnHeader::LOCAL_CLEAR) ||
+		 flowInfo.ts - lastTs >= arnInterval) && p->GetSize() >= 1000;
+	bool shouldClear = flowInfo.q_len < clearThreshold &&
+		((isSpine && currentType == ArnHeader::REMOTE_ARN) ||
+		 (isLeaf && currentType == ArnHeader::LOCAL_ARN)) && p->GetSize() >= 1000;
+
+	if (!shouldTrigger && !shouldClear) {
+		return;
+	}
+
+	Ptr<QbbNetDevice> device = DynamicCast<QbbNetDevice>(m_devices[inDev]);
+	if (device == nullptr) {
+		return;
+	}
+
+	if (isSpine) {
+		flowInfo.arn_type = shouldTrigger ? ArnHeader::REMOTE_ARN : ArnHeader::REMOTE_CLEAR;
+		m_arn_event[flowKey] = flowInfo;
+		std::cout << "[ARN][send] time_ns=" << Simulator::Now().GetTimeStep()
+				  << " switch=" << GetId()
+				  << " role=spine"
+				  << " type=" << ArnTypeName(flowInfo.arn_type)
+				  << " trigger=" << shouldTrigger
+				  << " clear=" << shouldClear
+				  << " inDev=" << inDev
+				  << " outDev=" << outDev
+				  << " qIndex=" << qIndex
+				  << " q_len=" << flowInfo.q_len
+				  << " q_level=" << flowInfo.q_level
+				  << " flowKey.srcLeaf=" << flowKey.src
+				  << " flowKey.dstLeaf=" << flowKey.dst
+				  << " flowKey.sport=" << flowKey.sport
+				  << " flowKey.dport=" << flowKey.dport
+				  << " pkt_sip=" << Ipv4Address(ch.sip)
+				  << " pkt_dip=" << Ipv4Address(ch.dip)
+				  << std::endl;
+		device->SendArn(0, flowKey, flowInfo, ch);
+		return;
+	}
+
+	if (isLeaf) {
+		flowInfo.arn_type = shouldTrigger ? ArnHeader::LOCAL_ARN : ArnHeader::LOCAL_CLEAR;
+		m_arn_event[flowKey] = flowInfo;
+		std::cout << "[ARN][send] time_ns=" << Simulator::Now().GetTimeStep()
+				  << " switch=" << GetId()
+				  << " role=leaf"
+				  << " type=" << ArnTypeName(flowInfo.arn_type)
+				  << " trigger=" << shouldTrigger
+				  << " clear=" << shouldClear
+				  << " inDev=" << inDev
+				  << " outDev=" << outDev
+				  << " qIndex=" << qIndex
+				  << " q_len=" << flowInfo.q_len
+				  << " q_level=" << flowInfo.q_level
+				  << " flowKey.srcLeaf=" << flowKey.src
+				  << " flowKey.dstLeaf=" << flowKey.dst
+				  << " flowKey.sport=" << flowKey.sport
+				  << " flowKey.dport=" << flowKey.dport
+				  << " pkt_sip=" << Ipv4Address(ch.sip)
+				  << " pkt_dip=" << Ipv4Address(ch.dip)
+				  << std::endl;
+		CustomHeader arnCh = ch;
+		Ptr<Packet> arnPacket = device->ArnHeaderProcess(flowKey, flowInfo, arnCh);
+		SwitchReceiveArn(device, arnPacket, arnCh, outDev);
+	}
+}
+
+bool SwitchNode::SwitchReceiveArn(Ptr<NetDevice> device, Ptr<Packet> packet, CustomHeader &ch, uint32_t congestedPath) {
+	bool isSpine = IsSpineSwitch();
+	bool isLeaf = !isSpine && IsLeafSwitch();
+	if (!isLeaf || ch.l3Prot != 0xFA) {
+		return true;
+	}
+
+	ArnHeader::FlowInfo flowInfo;
+	flowInfo.q_len = ch.arn.flowInfo.qlen;
+	flowInfo.q_level = ch.arn.flowInfo.q_level;
+	flowInfo.load_level = ch.arn.flowInfo.load_level;
+	flowInfo.arn_type = ch.arn.flowInfo.arn_type;
+	flowInfo.ts = ch.arn.flowInfo.ts;
+
+	uint32_t dstLeafId = ch.arn.flowKey.src;
+	std::get<0>(m_arn_receive[dstLeafId])[congestedPath] = flowInfo;
+
+	if (flowInfo.arn_type == ArnHeader::REMOTE_ARN || flowInfo.arn_type == ArnHeader::LOCAL_ARN) {
+		std::get<1>(m_arn_receive[dstLeafId])[congestedPath] = Simulator::Now().GetTimeStep();
+	} else if (flowInfo.arn_type == ArnHeader::REMOTE_CLEAR || flowInfo.arn_type == ArnHeader::LOCAL_CLEAR) {
+		std::get<2>(m_arn_receive[dstLeafId])[congestedPath] = Simulator::Now().GetTimeStep();
+	}
+
+	std::cout << "[ARN][source-leaf-read] time_ns=" << Simulator::Now().GetTimeStep()
+			  << " switch=" << GetId()
+			  << " congestedPath=" << congestedPath
+			  << " type=" << ArnTypeName(flowInfo.arn_type)
+			  << " q_len=" << flowInfo.q_len
+			  << " q_level=" << flowInfo.q_level
+			  << " load_level=" << flowInfo.load_level
+			  << " event_ts=" << flowInfo.ts
+			  << " flowKey.srcLeaf=" << ch.arn.flowKey.src
+			  << " flowKey.dstLeaf=" << ch.arn.flowKey.dst
+			  << " flowKey.sport=" << ch.arn.flowKey.sport
+			  << " flowKey.dport=" << ch.arn.flowKey.dport
+			  << " pkt_sip=" << Ipv4Address(ch.sip)
+			  << " pkt_dip=" << Ipv4Address(ch.dip)
+			  << std::endl;
+
+	return true;
+}
+
 void SwitchNode::SendToDev(Ptr<Packet>p, CustomHeader &ch){
 	int idx = GetOutDev(p, ch);
 	if (idx >= 0){
@@ -167,7 +470,7 @@ void SwitchNode::SendToDev(Ptr<Packet>p, CustomHeader &ch){
 
 		// determine the qIndex
 		uint32_t qIndex;
-		if (ch.l3Prot == 0xFF || ch.l3Prot == 0xFE || (m_ackHighPrio && (ch.l3Prot == 0xFD || ch.l3Prot == 0xFC))){  //QCN or PFC or NACK, go highest priority
+		if (ch.l3Prot == 0xFF || ch.l3Prot == 0xFE || ch.l3Prot == 0xFA || (m_ackHighPrio && (ch.l3Prot == 0xFD || ch.l3Prot == 0xFC))){  //QCN, PFC, ARN or NACK, go highest priority
 			qIndex = 0;
 		}else{
 			qIndex = (ch.l3Prot == 0x06 ? 1 : ch.udp.pg); // if TCP, put to queue 1
@@ -185,6 +488,7 @@ void SwitchNode::SendToDev(Ptr<Packet>p, CustomHeader &ch){
 				return; // Drop
 			}
 			CheckAndSendPfc(inDev, qIndex);
+			CheckAndSendArn(inDev, idx, qIndex, p, ch);
 		}
 		m_bytes[inDev][idx][qIndex] += p->GetSize();
 		m_devices[idx]->SwitchSend(qIndex, p, ch);
@@ -241,12 +545,49 @@ void SwitchNode::AddTableEntry(Ipv4Address &dstAddr, uint32_t intf_idx){
 	m_rtTable[dip].push_back(intf_idx);
 }
 
+void SwitchNode::AddNodeEntry(uint32_t intf_idx, Ptr<Node> node) {
+	if (m_ifToNode.find(intf_idx) == m_ifToNode.end()) {
+		m_ifToNode[intf_idx] = node;
+	}
+	if (node != nullptr && m_nodeToIf.find(node->GetId()) == m_nodeToIf.end()) {
+		m_nodeToIf[node->GetId()] = intf_idx;
+	}
+	if (node != nullptr && node->GetNodeType() == 0) {
+		uint32_t hostId = node->GetId();
+		uint32_t astraHostIp = 0x0b000001 + ((hostId / 256) * 0x00010000) + ((hostId % 256) * 0x00000100);
+		Ptr<Node> leaf = GetObject<Node>();
+		m_ipToLeafId[astraHostIp] = leaf;
+		s_ipToLeafId[astraHostIp] = leaf;
+
+		Ptr<Ipv4> ipv4 = node->GetObject<Ipv4>();
+		if (ipv4 != nullptr && ipv4->GetNInterfaces() > 1 && ipv4->GetNAddresses(1) > 0) {
+			uint32_t ip = ipv4->GetAddress(1, 0).GetLocal().Get();
+			m_ipToLeafId[ip] = leaf;
+			s_ipToLeafId[ip] = leaf;
+		}
+	}
+}
+
+void SwitchNode::AddInterfaceEntry(uint32_t node_id, uint32_t intf_idx) {
+	if (m_nodeToIf.find(node_id) == m_nodeToIf.end()) {
+		m_nodeToIf[node_id] = intf_idx;
+	}
+}
+
 void SwitchNode::ClearTable(){
 	m_rtTable.clear();
 }
 
 // This function can only be called in switch mode
 bool SwitchNode::SwitchReceiveFromDevice(Ptr<NetDevice> device, Ptr<Packet> packet, CustomHeader &ch){
+	if (ch.l3Prot == 0xFA) {
+		FlowIdTag t;
+		uint32_t inDev = 0;
+		if (packet->PeekPacketTag(t)) {
+			inDev = t.GetFlowId();
+		}
+		return SwitchReceiveArn(device, packet, ch, inDev);
+	}
 	SendToDev(packet, ch);
 	return true;
 }

@@ -132,16 +132,32 @@ public:
 		  uint32_t qlen;
 		  uint8_t qIndex;
 	  } pfc;
+	  struct {
+		  struct {
+			  uint32_t src;
+			  uint32_t dst;
+			  uint32_t sport;
+			  uint32_t dport;
+		  } flowKey;
+		  struct {
+			  uint32_t qlen;
+			  uint32_t q_level;
+			  uint32_t load_level;
+			  uint32_t arn_type;
+			  uint64_t ts;
+		  } flowInfo;
+	  } arn;
   };
 
   uint8_t GetIpv4EcnBits (void) const;
   static uint32_t GetAckSerializedSize(void);
   static uint32_t GetUdpHeaderSize(void); // include udp, seqTs, INT
   static uint32_t GetStaticWholeHeaderSize(void); // ppp + ip + udp + int
+  static uint32_t GetArnSerializedSize(void);
+  static uint32_t GetArnWholeHeaderSize(void); // ppp + ip + arn
 };
 
 } // namespace ns3
 
 
 #endif /* CUSTOM_HEADER_H */
-

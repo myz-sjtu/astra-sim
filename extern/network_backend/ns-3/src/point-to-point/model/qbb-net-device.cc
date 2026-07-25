@@ -435,6 +435,57 @@ namespace ns3 {
 		SwitchSend(0, p, ch);
 	}
 
+	void QbbNetDevice::SendArn(uint32_t qIndex,
+							 ArnHeader::FlowKey flowKey,
+							 ArnHeader::FlowInfo flowInfo,
+							 CustomHeader &oldCh) {
+		Ptr<Packet> p = Create<Packet>(0);
+		ArnHeader arnHeader(flowKey, flowInfo);
+		p->AddHeader(arnHeader);
+
+		Ipv4Header ipv4h;
+		ipv4h.SetProtocol(0xFA);
+		ipv4h.SetSource(Ipv4Address(oldCh.dip));
+		ipv4h.SetDestination(Ipv4Address(oldCh.sip));
+		ipv4h.SetPayloadSize(p->GetSize());
+		ipv4h.SetTtl(1);
+
+		Ptr<UniformRandomVariable> rng_generator = CreateObject<UniformRandomVariable> ();
+		rng_generator->SetAttribute ("Min", DoubleValue (0));
+		rng_generator->SetAttribute ("Max", DoubleValue (65536));
+		ipv4h.SetIdentification(rng_generator->GetValue());
+		p->AddHeader(ipv4h);
+		AddHeader(p, 0x800);
+
+		CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+		p->PeekHeader(ch);
+		SwitchSend(qIndex, p, ch);
+	}
+
+	Ptr<Packet> QbbNetDevice::ArnHeaderProcess(ArnHeader::FlowKey flowKey,
+										 ArnHeader::FlowInfo flowInfo,
+										 CustomHeader &ch) {
+		Ptr<Packet> p = Create<Packet>(0);
+		ArnHeader arnHeader(flowKey, flowInfo);
+		p->AddHeader(arnHeader);
+
+		Ipv4Header ipv4h;
+		ipv4h.SetProtocol(0xFA);
+		ipv4h.SetSource(Ipv4Address(ch.dip));
+		ipv4h.SetDestination(Ipv4Address(ch.sip));
+		ipv4h.SetPayloadSize(p->GetSize());
+		ipv4h.SetTtl(1);
+
+		Ptr<UniformRandomVariable> rng_generator = CreateObject<UniformRandomVariable> ();
+		rng_generator->SetAttribute ("Min", DoubleValue (0));
+		rng_generator->SetAttribute ("Max", DoubleValue (65536));
+		ipv4h.SetIdentification(rng_generator->GetValue());
+		p->AddHeader(ipv4h);
+		AddHeader(p, 0x800);
+		p->PeekHeader(ch);
+		return p;
+	}
+
 	Ptr<Packet> QbbNetDevice::NICSendPfc(uint32_t qIndex, uint32_t type) {
 	Ptr<Packet> p = Create<Packet>(0);
 	PauseHeader pauseh((type == 0 ? m_pausetime : 0), m_queue->GetNBytes(qIndex),

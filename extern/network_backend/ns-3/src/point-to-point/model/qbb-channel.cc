@@ -18,6 +18,7 @@
 
 #include "qbb-channel.h"
 #include "qbb-net-device.h"
+#include "switch-node.h"
 #include "ns3/trace-source-accessor.h"
 #include "ns3/packet.h"
 #include "ns3/simulator.h"
@@ -80,6 +81,17 @@ QbbChannel::Attach (Ptr<QbbNetDevice> device)
       m_link[1].m_dst = m_link[0].m_src;
       m_link[0].m_state = IDLE;
       m_link[1].m_state = IDLE;
+
+      Ptr<SwitchNode> sw0 = DynamicCast<SwitchNode>(m_link[0].m_src->GetNode());
+      Ptr<SwitchNode> sw1 = DynamicCast<SwitchNode>(m_link[1].m_src->GetNode());
+      if (sw0 != nullptr)
+        {
+          sw0->AddNodeEntry(m_link[0].m_src->GetIfIndex(), m_link[1].m_src->GetNode());
+        }
+      if (sw1 != nullptr)
+        {
+          sw1->AddNodeEntry(m_link[1].m_src->GetIfIndex(), m_link[0].m_src->GetNode());
+        }
     }
 
 

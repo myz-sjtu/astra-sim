@@ -100,6 +100,8 @@ uint32_t CustomHeader::GetSerializedSize (void) const{
 			len += 8;
 		else if (l3Prot == 0xFE)
 			len += 9;
+		else if (l3Prot == 0xFA)
+			len += GetArnSerializedSize();
 	}
 	return len;
 }
@@ -180,6 +182,16 @@ void CustomHeader::Serialize (Buffer::Iterator start) const{
 		  i.WriteU32 (pfc.time);
 		  i.WriteU32 (pfc.qlen);
 		  i.WriteU8 (pfc.qIndex);
+	  }else if (l3Prot == 0xFA){ // ARN
+		  i.WriteU32(arn.flowKey.src);
+		  i.WriteU32(arn.flowKey.dst);
+		  i.WriteU32(arn.flowKey.sport);
+		  i.WriteU32(arn.flowKey.dport);
+		  i.WriteU32(arn.flowInfo.qlen);
+		  i.WriteU32(arn.flowInfo.q_level);
+		  i.WriteU32(arn.flowInfo.load_level);
+		  i.WriteU32(arn.flowInfo.arn_type);
+		  i.WriteU64(arn.flowInfo.ts);
 	  }
   }
 }
@@ -319,6 +331,19 @@ CustomHeader::Deserialize (Buffer::Iterator start)
 		  pfc.qlen = i.ReadU32 ();
 		  pfc.qIndex = i.ReadU8 ();
 		  l4Size = 9;
+	  }else if (l3Prot == 0xFA){ // ARN
+		  i = start;
+		  i.Next(l2Size + l3Size);
+		  arn.flowKey.src = i.ReadU32();
+		  arn.flowKey.dst = i.ReadU32();
+		  arn.flowKey.sport = i.ReadU32();
+		  arn.flowKey.dport = i.ReadU32();
+		  arn.flowInfo.qlen = i.ReadU32();
+		  arn.flowInfo.q_level = i.ReadU32();
+		  arn.flowInfo.load_level = i.ReadU32();
+		  arn.flowInfo.arn_type = i.ReadU32();
+		  arn.flowInfo.ts = i.ReadU64();
+		  l4Size = GetArnSerializedSize();
 	  }
   }
 
@@ -341,5 +366,12 @@ uint32_t CustomHeader::GetStaticWholeHeaderSize(void){
 	return 14 + 20 + GetUdpHeaderSize();
 }
 
-} // namespace ns3
+uint32_t CustomHeader::GetArnSerializedSize(void){
+	return sizeof(uint32_t) * 8 + sizeof(uint64_t);
+}
 
+uint32_t CustomHeader::GetArnWholeHeaderSize(void){
+	return 14 + 20 + GetArnSerializedSize();
+}
+
+} // namespace ns3
