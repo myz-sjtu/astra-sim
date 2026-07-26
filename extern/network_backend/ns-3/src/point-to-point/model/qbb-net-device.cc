@@ -239,6 +239,10 @@ namespace ns3 {
 		}
 
 		m_rdmaEQ = CreateObject<RdmaEgressQueue>();
+		sendPktSize = 0;
+		lastSendPktSize = 0;
+		calcBandwidth = 0;
+		last_ts = 0;
 	}
 
 	QbbNetDevice::~QbbNetDevice()
@@ -351,6 +355,19 @@ namespace ns3 {
 		NS_LOG_INFO("Node " << m_node->GetId() << " dev " << m_ifIndex << " queue " << qIndex <<
 			" resumed at " << Simulator::Now().GetSeconds());
 		DequeueAndTransmit();
+	}
+
+	void QbbNetDevice::CalculateThroughput()
+	{
+		uint64_t interval = Simulator::Now().GetTimeStep() - last_ts;
+		if (interval == 0) {
+			return;
+		}
+		last_ts = Simulator::Now().GetTimeStep();
+		calcBandwidth =
+			(sendPktSize - lastSendPktSize) *
+			((double)Seconds(1).GetTimeStep() / interval);
+		lastSendPktSize = sendPktSize;
 	}
 
 	void
@@ -543,6 +560,14 @@ namespace ns3 {
 		Simulator::Schedule(txCompleteTime, &QbbNetDevice::TransmitComplete, this);
 
 		bool result = m_channel->TransmitStart(p, this, txTime);
+		if (result == true) {
+			CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+			p->PeekHeader(ch);
+			if (ch.l3Prot == 0x11) {
+				sendPktSize += p->GetSize();
+				CalculateThroughput();
+			}
+		}
 		if (result == false)
 		{
 			m_phyTxDropTrace(p);

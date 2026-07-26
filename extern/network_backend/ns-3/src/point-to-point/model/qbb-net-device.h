@@ -131,6 +131,7 @@ public:
   Ptr<Packet> NICSendPfc(uint32_t qIndex, uint32_t type);
   void SendArn(uint32_t qIndex, ArnHeader::FlowKey flowKey, ArnHeader::FlowInfo flowInfo, CustomHeader &oldCh);
   Ptr<Packet> ArnHeaderProcess(ArnHeader::FlowKey flowKey, ArnHeader::FlowInfo flowInfo, CustomHeader &ch);
+  void CalculateThroughput();
 
 	TracedCallback<Ptr<const Packet>, uint32_t> m_traceEnqueue;
 	TracedCallback<Ptr<const Packet>, uint32_t> m_traceDequeue;
@@ -201,6 +202,12 @@ public:
 	// callback for sent a packet
 	typedef Callback<void, Ptr<RdmaQueuePair>, Ptr<Packet>, Time> RdmaPktSent;
 	RdmaPktSent m_rdmaPktSent;
+
+	// HPCC-style per-device throughput sampling for DLB/GLB quality.
+	uint64_t sendPktSize;
+	uint64_t lastSendPktSize;
+	double calcBandwidth;
+	uint64_t last_ts;
 
 	Ptr<RdmaEgressQueue> GetRdmaQueue();
 	void TakeDown(); // take down this device

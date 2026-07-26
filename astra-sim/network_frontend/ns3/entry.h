@@ -121,7 +121,37 @@ map<MsgEventKey, MsgEvent> sim_recv_waiting_hash;
 map<MsgEventKey, int> received_msg_standby_hash;
 
 const char *fwd_mode_name(uint8_t fwd_mode) {
-  return fwd_mode == 1 ? "packet-spray-rr" : "flow-ecmp";
+  return fwd_mode == 1 ? "packet-spray" : "flow-ecmp";
+}
+
+const char *packet_strategy_name(uint32_t strategy) {
+  switch (strategy) {
+  case 0:
+    return "round-robin/arn-scale";
+  case 1:
+    return "arn-reject";
+  case 2:
+    return "dlb";
+  case 3:
+    return "glb";
+  default:
+    return "unknown";
+  }
+}
+
+const char *arn_packet_strategy_name(uint32_t strategy) {
+  switch (strategy) {
+  case 0:
+    return "arn-scale";
+  case 1:
+    return "arn-reject";
+  case 2:
+    return "dlb";
+  case 3:
+    return "glb";
+  default:
+    return "unknown";
+  }
 }
 
 // send_flow commands the ns3 simulator to schedule a RDMA message to be sent
@@ -330,7 +360,12 @@ int setup_ns3_simulation(string network_configuration) {
   cout << "[AstraSimNetwork] forwarding config: DEFAULT_FWD_MODE="
        << static_cast<uint32_t>(default_fwd_mode) << " ("
        << fwd_mode_name(default_fwd_mode) << "), FLOW_STRATEGY="
-       << flow_strategy << ", PACKET_STRATEGY=" << packet_strategy << "\n";
+       << flow_strategy << ", PACKET_STRATEGY=" << packet_strategy << " ("
+       << packet_strategy_name(packet_strategy) << "), ENABLE_ARN="
+       << enable_arn << ", ARN_PACKET_STRATEGY=" << arn_packet_strategy
+       << " (" << arn_packet_strategy_name(arn_packet_strategy)
+       << "), ARN_INTERVAL=" << arn_interval_ns
+       << ", ARN_CONGESTION_QLEN=" << arn_congestion_qlen << "\n";
   cout << "[AstraSimNetwork] input files: TOPOLOGY_FILE=" << topology_file
        << ", FLOW_FILE=" << flow_file << ", TRACE_FILE=" << trace_file << "\n";
 

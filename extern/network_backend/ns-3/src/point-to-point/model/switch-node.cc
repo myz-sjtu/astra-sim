@@ -12,8 +12,10 @@
 #include "ppp-header.h"
 #include "ns3/simulator.h"
 #include "ns3/int-header.h"
+#include "ns3/random-variable-stream.h"
 #include <cmath>
 #include <iostream>
+#include <limits>
 
 namespace ns3 {
 
@@ -71,13 +73,18 @@ TypeId SwitchNode::GetTypeId (void)
 			MakeUintegerAccessor(&SwitchNode::m_flowStrategy),
 			MakeUintegerChecker<uint32_t>())
 	.AddAttribute("PacketStrategy",
-			"Packet-based forwarding strategy (0=RoundRobin)",
+			"Packet-based forwarding strategy when ARN is disabled (0=RoundRobin)",
 			UintegerValue(0),
 			MakeUintegerAccessor(&SwitchNode::m_packetStrategy),
 			MakeUintegerChecker<uint32_t>())
+	.AddAttribute("ArnPacketStrategy",
+			"Packet-based forwarding strategy when ARN is enabled (0=ARN reject)",
+			UintegerValue(0),
+			MakeUintegerAccessor(&SwitchNode::m_arnPacketStrategy),
+			MakeUintegerChecker<uint32_t>())
 	.AddAttribute("ArnEnabled",
 			"Enable ARN congestion notification for packet spray flows",
-			BooleanValue(true),
+			BooleanValue(false),
 			MakeBooleanAccessor(&SwitchNode::m_arn),
 			MakeBooleanChecker())
 	.AddAttribute("IsSpine",
@@ -122,7 +129,8 @@ SwitchNode::SwitchNode(){
 		m_rrCounter[i] = 0;
 	m_flowStrategy = 0;
 	m_packetStrategy = 0;
-	m_arn = true;
+	m_arnPacketStrategy = 0;
+	m_arn = false;
 	m_isSpine = false;
 	m_isLeaf = false;
 	m_congestionQlen = 5000000;
@@ -132,10 +140,21 @@ int SwitchNode::GetOutDev(Ptr<const Packet> p, CustomHeader &ch){
 	// Dispatch based on forwarding mode in header
 	if (ch.l3Prot == 0x11 && ch.udp.fwd_mode == 1) {
 		// Packet spray mode
-		switch (m_packetStrategy) {
-			case PKT_STRATEGY_RR:
-			default:
-				return GetOutDevPktSprayRR(p, ch);
+		if (m_arn) {
+			switch (m_packetStrategy) {
+				case PKT_STRATEGY_DLB:
+					return GetOutDevRouteDlb(p, ch);
+				case PKT_STRATEGY_RR:
+				case PKT_STRATEGY_ARN_REJECT:
+				default:
+					return GetOutDevPktSprayArn(p, ch);
+			}
+		} else {
+			switch (m_packetStrategy) {
+				case PKT_STRATEGY_RR:
+				default:
+					return GetOutDevPktSprayRR(p, ch);
+			}
 		}
 	} else {
 		// Flow-based mode (default for UDP and all other protocols)
@@ -199,6 +218,127 @@ int SwitchNode::GetOutDevPktSprayRR(Ptr<const Packet> p, CustomHeader &ch){
 	return nexthops[idx];
 }
 
+bool SwitchNode::IsActiveArn(const ArnHeader::FlowInfo &flowInfo) const {
+	return flowInfo.arn_type == ArnHeader::REMOTE_ARN ||
+		flowInfo.arn_type == ArnHeader::REMOTE_PERIOD ||
+		flowInfo.arn_type == ArnHeader::LOCAL_ARN;
+}
+
+uint32_t SwitchNode::GetArnPathCost(uint32_t dstLeafId, uint32_t outDev) const {
+	auto receiveIt = m_arn_receive.find(dstLeafId);
+	if (receiveIt == m_arn_receive.end()) {
+		return 0;
+	}
+
+	const auto &profile = std::get<0>(receiveIt->second);
+	auto profileIt = profile.find(outDev);
+	if (profileIt == profile.end() || !IsActiveArn(profileIt->second)) {
+		return 0;
+	}
+
+	const auto &effectTs = std::get<1>(receiveIt->second);
+	const auto &clearTs = std::get<2>(receiveIt->second);
+	auto effectIt = effectTs.find(outDev);
+	auto clearIt = clearTs.find(outDev);
+	if (clearIt != clearTs.end() &&
+		(effectIt == effectTs.end() || clearIt->second >= effectIt->second)) {
+		return 0;
+	}
+
+	return profileIt->second.q_level + 1;
+}
+
+int SwitchNode::GetOutDevPktSprayArn(Ptr<const Packet> p, CustomHeader &ch){
+	auto entry = m_rtTable.find(ch.dip);
+	if (entry == m_rtTable.end())
+		return -1;
+
+	auto &nexthops = entry->second;
+	if (nexthops.empty())
+		return -1;
+
+	if (!IsLeafSwitch())
+		return GetOutDevPktSprayRR(p, ch);
+
+	Ptr<Node> dstLeaf;
+	if (!ResolveLeafNode(ch.dip, dstLeaf) || dstLeaf == nullptr)
+		return GetOutDevPktSprayRR(p, ch);
+
+	uint32_t dstLeafId = dstLeaf->GetId();
+	if (m_arn_receive.find(dstLeafId) == m_arn_receive.end())
+		return GetOutDevPktSprayRR(p, ch);
+
+	FlowIdTag t;
+	uint32_t inDev = 0;
+	if (p->PeekPacketTag(t))
+		inDev = t.GetFlowId();
+
+	uint32_t bestCost = std::numeric_limits<uint32_t>::max();
+	std::vector<int> bestNexthops;
+	for (int outDev : nexthops) {
+		uint32_t cost = GetArnPathCost(dstLeafId, static_cast<uint32_t>(outDev));
+		if (cost < bestCost) {
+			bestCost = cost;
+			bestNexthops.clear();
+			bestNexthops.push_back(outDev);
+		} else if (cost == bestCost) {
+			bestNexthops.push_back(outDev);
+		}
+	}
+
+	if (bestNexthops.empty())
+		return GetOutDevPktSprayRR(p, ch);
+
+	uint32_t idx = m_rrCounter[inDev] % bestNexthops.size();
+	m_rrCounter[inDev]++;
+	return bestNexthops[idx];
+}
+
+int SwitchNode::GetOutDevRouteDlb(Ptr<const Packet> p, CustomHeader &ch) {
+	auto entry = m_rtTable.find(ch.dip);
+	if (entry == m_rtTable.end()) {
+		return -1;
+	}
+
+	auto &nexthops = entry->second;
+	if (nexthops.empty()) {
+		return -1;
+	}
+
+	int target = -1;
+	double bestQuality = std::numeric_limits<double>::max();
+	std::vector<int> goodNexthops;
+
+	for (const auto &nexthop : nexthops) {
+		ArnHeader::FlowInfo localFlowInfo;
+		localFlowInfo.q_len = m_mmu->egress_bytes[nexthop][ch.udp.pg];
+		localFlowInfo.q_level = GetQLevel(localFlowInfo.q_len);
+
+		Ptr<QbbNetDevice> dev = DynamicCast<QbbNetDevice>(m_devices[nexthop]);
+		double load = dev == nullptr ? 0 : dev->calcBandwidth;
+		localFlowInfo.load_level = GetLoadLevel(load);
+
+		double totalQuality = localFlowInfo.load_level + localFlowInfo.q_level;
+		if (totalQuality < bestQuality) {
+			goodNexthops.clear();
+			goodNexthops.emplace_back(nexthop);
+			target = nexthop;
+			bestQuality = totalQuality;
+		} else if (std::abs(totalQuality - bestQuality) < 0.01) {
+			goodNexthops.emplace_back(nexthop);
+		}
+	}
+
+	if (goodNexthops.empty()) {
+		return -1;
+	}
+
+	Ptr<UniformRandomVariable> rng = CreateObject<UniformRandomVariable>();
+	uint32_t idx = rng->GetInteger(0, goodNexthops.size() - 1);
+	target = goodNexthops[idx];
+	return target;
+}
+
 void SwitchNode::CheckAndSendPfc(uint32_t inDev, uint32_t qIndex){
 	Ptr<QbbNetDevice> device = DynamicCast<QbbNetDevice>(m_devices[inDev]);
 	if (m_mmu->CheckShouldPause(inDev, qIndex)){
@@ -224,6 +364,18 @@ uint32_t SwitchNode::GetQLevel(uint64_t qlen) const {
 		}
 	}
 	return q_level.size();
+}
+
+uint32_t SwitchNode::GetLoadLevel(double load) const {
+	if (load_level.empty()) {
+		return 0;
+	}
+	for (uint32_t i = 1; i < load_level.size(); i++) {
+		if (load >= load_level[i - 1] && load < load_level[i]) {
+			return i;
+		}
+	}
+	return load_level.size();
 }
 
 bool SwitchNode::ResolveLeafNode(uint32_t ip, Ptr<Node>& leafNode) const {
@@ -339,7 +491,8 @@ void SwitchNode::CheckAndSendArn(uint32_t inDev, uint32_t outDev, uint32_t qInde
 	ArnHeader::FlowInfo flowInfo;
 	flowInfo.q_len = m_mmu->egress_bytes[outDev][qIndex];
 	flowInfo.q_level = GetQLevel(flowInfo.q_len);
-	flowInfo.load_level = 0;
+	Ptr<QbbNetDevice> outDevice = DynamicCast<QbbNetDevice>(m_devices[outDev]);
+	flowInfo.load_level = outDevice == nullptr ? 0 : GetLoadLevel(outDevice->calcBandwidth);
 	flowInfo.ts = Simulator::Now().GetTimeStep();
 
 	uint64_t clearThreshold = m_congestionQlen - (m_congestionQlen >> 3);
@@ -383,6 +536,7 @@ void SwitchNode::CheckAndSendArn(uint32_t inDev, uint32_t outDev, uint32_t qInde
 				  << " qIndex=" << qIndex
 				  << " q_len=" << flowInfo.q_len
 				  << " q_level=" << flowInfo.q_level
+				  << " load_level=" << flowInfo.load_level
 				  << " flowKey.srcLeaf=" << flowKey.src
 				  << " flowKey.dstLeaf=" << flowKey.dst
 				  << " flowKey.sport=" << flowKey.sport
@@ -408,6 +562,7 @@ void SwitchNode::CheckAndSendArn(uint32_t inDev, uint32_t outDev, uint32_t qInde
 				  << " qIndex=" << qIndex
 				  << " q_len=" << flowInfo.q_len
 				  << " q_level=" << flowInfo.q_level
+				  << " load_level=" << flowInfo.load_level
 				  << " flowKey.srcLeaf=" << flowKey.src
 				  << " flowKey.dstLeaf=" << flowKey.dst
 				  << " flowKey.sport=" << flowKey.sport
@@ -422,6 +577,10 @@ void SwitchNode::CheckAndSendArn(uint32_t inDev, uint32_t outDev, uint32_t qInde
 }
 
 bool SwitchNode::SwitchReceiveArn(Ptr<NetDevice> device, Ptr<Packet> packet, CustomHeader &ch, uint32_t congestedPath) {
+	if (!m_arn) {
+		return true;
+	}
+
 	bool isSpine = IsSpineSwitch();
 	bool isLeaf = !isSpine && IsLeafSwitch();
 	if (!isLeaf || ch.l3Prot != 0xFA) {

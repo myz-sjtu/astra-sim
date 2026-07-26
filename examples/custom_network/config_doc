@@ -1,0 +1,51 @@
+# Custom Network Config Reference
+
+The files `config_hpcc_case*.txt` are ns-3 base configs consumed by
+`extern/network_backend/ns-3/scratch/common.h`. The custom input generator
+rewrites path and selected runtime keys into `generated/<scenario>/network_config.txt`.
+
+## Required Path Keys
+
+- `TOPOLOGY_FILE`: generated physical topology file.
+- `FLOW_FILE`: generated flow override file.
+- `TRACE_FILE`: generated trace-node file.
+- `TRACE_OUTPUT_FILE`, `FCT_OUTPUT_FILE`, `PFC_OUTPUT_FILE`, `QLEN_MON_FILE`: ns-3 output paths.
+
+## Forwarding Keys
+
+- `DEFAULT_FWD_MODE`: default per-flow forwarding mode. `0` means flow ECMP, `1` means packet spray. A flow row can override this through its `strategy` value.
+- `FLOW_STRATEGY`: flow-based routing strategy. Currently `0` is ECMP.
+- `PACKET_STRATEGY`: packet-spray routing strategy. With `ENABLE_ARN 0`, currently only `0` is round-robin. With `ENABLE_ARN 1`, `2` enables HPCC-style DLB.
+- `ARN_PACKET_STRATEGY`: backward-compatible ARN strategy field; `PACKET_STRATEGY` is authoritative for ARN packet-spray selection.
+- `ENABLE_ARN`: ARN feature switch. `0` disables ARN generation and uses ARN-off packet spray. `1` enables ARN notification handling and ARN packet-spray strategies.
+- `ARN_INTERVAL`: minimum interval in ns between repeated ARN notifications for the same path.
+- `ARN_CONGESTION_QLEN`: egress queue length threshold in bytes used to trigger ARN. The clear threshold is `7/8 * ARN_CONGESTION_QLEN`.
+- `Q_LEVEL`: ascending queue-length thresholds used to discretize local queue quality.
+- `LOAD_LEVEL`: ascending byte-per-second thresholds used to discretize HPCC `calcBandwidth` quality.
+
+When ARN is enabled, `PACKET_STRATEGY` follows HPCC ARN numbering: `0=ARN_SCALE`, `1=ARN_REJECT`, `2=DLB`, `3=GLB`. This branch implements DLB first.
+
+## ARN-Aware Selection
+
+When ARN is enabled, congested leaf or spine switches emit ARN packets for packet-spray data traffic. With `PACKET_STRATEGY 2`, DLB chooses the lowest local `q_level + load_level` among equal-cost next hops and randomly breaks ties.
+
+## Example
+
+```text
+FLOW_STRATEGY 0
+PACKET_STRATEGY 0
+ARN_PACKET_STRATEGY 0
+DEFAULT_FWD_MODE 1
+ENABLE_ARN 1
+ARN_INTERVAL 10000
+ARN_CONGESTION_QLEN 5000000
+Q_LEVEL 2 0 5000000
+LOAD_LEVEL 2 0 50000000000
+```
+
+## Queue And ECN Keys
+
+- `KMIN_MAP`, `KMAX_MAP`, `PMAX_MAP`: per-link-rate ECN thresholds. Every link bandwidth in the topology must have entries.
+- `BUFFER_SIZE`: switch buffer size in MB.
+- `HEADROOM_FACTOR`: multiplier for PFC headroom calculation.
+- `QLEN_MON_START`, `QLEN_MON_END`, `QLEN_MON_INTERVAL`: queue monitor window and period in ns.

@@ -1,0 +1,97 @@
+# Custom Network Scenario Reference
+
+Scenario JSON files describe a physical topology, traffic, and the subset of
+network config keys rewritten by `generate_custom_inputs.py`.
+
+## Top-Level Fields
+
+- `name`: scenario name. Used for generated directory and ns-3 output paths.
+- `num_npus`: number of host/NPU nodes. Host IDs must be `0..num_npus-1`.
+- `switches`: switch node IDs. IDs must be contiguous immediately after host IDs.
+- `leaf_switches`, `spine_switches`: explicit switch roles. Together they must match `switches`.
+- `link_defaults`: default `bandwidth`, `latency`, and `error_rate` for links.
+- `links`: physical links. Each entry has `src`, `dst`, optional `bandwidth`, optional `latency`, optional `error_rate`, and optional parallel `count`.
+- Exactly one of `flows` or `traffic` must be present.
+- `network`: runtime network settings copied into the generated ns-3 config.
+
+## Explicit Flows
+
+Each `flows` entry supports:
+
+- `src`, `dst`: host IDs.
+- `bytes`: payload bytes.
+- `tag`: ASTRA-sim communication tag.
+- `start_time_ns` or `start_time_s`: optional start time.
+- `strategy`: optional per-flow forwarding mode. `0` is flow ECMP, `1` is packet spray.
+
+If `strategy` is omitted, the flow uses `network.default_fwd_mode`.
+
+## Generated Traffic
+
+The supported generated pattern is `half_doubling_allreduce`:
+
+```json
+"traffic": {
+  "pattern": "half_doubling_allreduce",
+  "offsets": [8, 4, 2, 1],
+  "bytes_per_flow": 100000000,
+  "include_reverse": true,
+  "phase_sync": "per_rank"
+}
+```
+
+## Network Fields
+
+- `default_fwd_mode`: default flow forwarding mode. `0` is flow ECMP, `1` is packet spray.
+- `flow_strategy`: flow routing strategy. Currently only `0` is supported.
+- `packet_strategy`: packet-spray routing strategy. When `enable_arn` is `0`, currently only `0` is round-robin. When `enable_arn` is `1`, HPCC ARN numbering is used: `0=ARN_SCALE`, `1=ARN_REJECT`, `2=DLB`, `3=GLB`.
+- `arn_packet_strategy`: backward-compatible ARN strategy field. New ARN packet-spray scenarios should keep it equal to `packet_strategy`; `packet_strategy` is the authoritative selector.
+- `enable_arn`: `0` disables ARN and uses ARN-off packet spray; `1` enables ARN generation and ARN packet-spray strategies.
+- `arn_interval_ns`: minimum repeated ARN notification interval in ns.
+- `arn_congestion_qlen`: ARN trigger queue threshold in bytes.
+- `q_level`: optional ascending queue-length thresholds used to discretize local queue quality.
+- `load_level`: optional ascending byte-per-second thresholds used to discretize HPCC `calcBandwidth` quality.
+- `enable_trace`: `0` disables packet tracing, `1` enables tracing.
+- `qlen_mon_start_ns`, `qlen_mon_end_ns`, `qlen_mon_interval_ns`: queue monitor timing in ns.
+- `ecn_thresholds`: per-bandwidth ECN threshold entries with `bandwidth`, `kmin`, `kmax`, and `pmax`.
+
+## ARN Scenario Example
+
+```json
+"network": {
+  "default_fwd_mode": 1,
+  "flow_strategy": 0,
+  "packet_strategy": 2,
+  "arn_packet_strategy": 2,
+  "enable_arn": 1,
+  "arn_interval_ns": 10000,
+  "arn_congestion_qlen": 5000000,
+  "q_level": [0, 5000000],
+  "load_level": [0, 50000000000],
+  "enable_trace": 0,
+  "qlen_mon_start_ns": 2000000000,
+  "qlen_mon_end_ns": 3000000000,
+  "qlen_mon_interval_ns": 100000,
+  "ecn_thresholds": [
+    {
+      "bandwidth": "400Gbps",
+      "kmin": 1600,
+      "kmax": 6400,
+      "pmax": 0.2
+    }
+  ]
+}
+```
+
+This configuration sends flows with packet spray by default and uses HPCC-style
+DLB (`packet_strategy=2`): each packet chooses among equal-cost next hops using
+the lowest local `q_level + load_level`, with random tie-breaking.
+
+## Generate Inputs
+
+```bash
+python3 examples/custom_network/generate_custom_inputs.py \
+  --scenario examples/custom_network/scenario_hpcc_case2.json \
+  --output-dir examples/custom_network/generated/hpcc_case2_aligned \
+  --base-network-config examples/custom_network/config_hpcc_case2.txt
+```

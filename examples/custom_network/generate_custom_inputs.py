@@ -112,6 +112,17 @@ def parse_data_rate(value: str, field: str) -> int:
     return int(bps)
 
 
+def parse_level_config(value: Any, field: str) -> list[int] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value:
+        raise ScenarioError(f"{field} must be a non-empty integer list")
+    levels = [require_int(item, f"{field}[{index}]") for index, item in enumerate(value)]
+    if levels != sorted(levels):
+        raise ScenarioError(f"{field} must be sorted ascending")
+    return levels
+
+
 def normalize_explicit_flows(
     raw_flows: Any,
     num_npus: int,
@@ -387,6 +398,37 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
     )
     if default_fwd_mode not in (0, 1):
         raise ScenarioError("network.default_fwd_mode must be 0 or 1")
+    flow_strategy = require_int(
+        network.get("flow_strategy", 0), "network.flow_strategy"
+    )
+    if flow_strategy != 0:
+        raise ScenarioError("network.flow_strategy currently supports only 0")
+    packet_strategy = require_int(
+        network.get("packet_strategy", 0), "network.packet_strategy"
+    )
+    enable_arn = require_int(network.get("enable_arn", 0), "network.enable_arn")
+    if enable_arn not in (0, 1):
+        raise ScenarioError("network.enable_arn must be 0 or 1")
+    arn_packet_strategy = require_int(
+        network.get("arn_packet_strategy", packet_strategy if enable_arn else 0),
+        "network.arn_packet_strategy",
+    )
+    if not enable_arn and packet_strategy != 0:
+        raise ScenarioError("network.packet_strategy currently supports only 0")
+    if enable_arn and packet_strategy not in (0, 1, 2, 3):
+        raise ScenarioError("network.packet_strategy must be 0, 1, 2, or 3 when ARN is enabled")
+    if arn_packet_strategy not in (0, 1, 2, 3):
+        raise ScenarioError("network.arn_packet_strategy must be 0, 1, 2, or 3")
+    arn_interval_ns = require_int(
+        network.get("arn_interval_ns", 10_000), "network.arn_interval_ns", 1
+    )
+    arn_congestion_qlen = require_int(
+        network.get("arn_congestion_qlen", 5_000_000),
+        "network.arn_congestion_qlen",
+        1,
+    )
+    q_level = parse_level_config(network.get("q_level"), "network.q_level")
+    load_level = parse_level_config(network.get("load_level"), "network.load_level")
     for flow in flows:
         if flow["fwd_mode"] is None:
             flow["fwd_mode"] = default_fwd_mode
@@ -463,6 +505,14 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
         "traffic": traffic,
         "network": {
             "default_fwd_mode": default_fwd_mode,
+            "flow_strategy": flow_strategy,
+            "packet_strategy": packet_strategy,
+            "arn_packet_strategy": arn_packet_strategy,
+            "enable_arn": enable_arn,
+            "arn_interval_ns": arn_interval_ns,
+            "arn_congestion_qlen": arn_congestion_qlen,
+            "q_level": q_level,
+            "load_level": load_level,
             "enable_trace": enable_trace,
             "qlen_mon_start_ns": qlen_mon_start_ns,
             "qlen_mon_end_ns": qlen_mon_end_ns,
@@ -710,9 +760,24 @@ def generate(
         "QLEN_MON_START": str(network["qlen_mon_start_ns"]),
         "QLEN_MON_END": str(network["qlen_mon_end_ns"]),
         "QLEN_MON_INTERVAL": str(network["qlen_mon_interval_ns"]),
+        "FLOW_STRATEGY": str(network["flow_strategy"]),
+        "PACKET_STRATEGY": str(network["packet_strategy"]),
+        "ARN_PACKET_STRATEGY": str(network["arn_packet_strategy"]),
         "DEFAULT_FWD_MODE": str(network["default_fwd_mode"]),
+        "ENABLE_ARN": str(network["enable_arn"]),
+        "ARN_INTERVAL": str(network["arn_interval_ns"]),
+        "ARN_CONGESTION_QLEN": str(network["arn_congestion_qlen"]),
         "ENABLE_TRACE": str(network["enable_trace"]),
     }
+    if network["q_level"] is not None:
+        replacements["Q_LEVEL"] = (
+            f"{len(network['q_level'])} " + " ".join(str(v) for v in network["q_level"])
+        )
+    if network["load_level"] is not None:
+        replacements["LOAD_LEVEL"] = (
+            f"{len(network['load_level'])} "
+            + " ".join(str(v) for v in network["load_level"])
+        )
     if network["ecn_thresholds"] is not None:
         thresholds = network["ecn_thresholds"]
         replacements.update(

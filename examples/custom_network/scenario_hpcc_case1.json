@@ -110,16 +110,16 @@
   ],
   "flows": [
     {
-      "src": 4,
-      "dst": 3,
+      "src": 3,
+      "dst": 4,
       "bytes": 100000000,
       "tag": 1,
       "start_time_s": 2,
       "strategy": 0
     },
     {
-      "src": 5,
-      "dst": 6,
+      "src": 6,
+      "dst": 5,
       "bytes": 100000000,
       "tag": 2,
       "start_time_s": 2,

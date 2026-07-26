@@ -39,6 +39,7 @@
 #include <time.h>
 #include <tuple>
 #include <unordered_map>
+#include <vector>
 
 using namespace ns3;
 using namespace std;
@@ -77,8 +78,14 @@ int nic_total_pause_time =
 
 uint32_t ack_high_prio = 0;
 uint32_t flow_strategy = 0;  // Flow-based forwarding strategy: 0=ECMP
-uint32_t packet_strategy = 0; // Packet-based forwarding strategy: 0=RR
+uint32_t packet_strategy = 0; // Packet spray strategy. ARN on: 0=ARN_SCALE, 1=ARN_REJECT, 2=DLB, 3=GLB
+uint32_t arn_packet_strategy = 0; // Backward-compatible alias; PacketStrategy is authoritative when ARN is on.
 uint8_t default_fwd_mode = 0; // Default forwarding mode for all flows: 0=flow-based, 1=packet spray
+bool enable_arn = false;
+uint64_t arn_interval_ns = 10000;
+uint64_t arn_congestion_qlen = 5000000;
+std::vector<uint64_t> q_level;
+std::vector<uint64_t> load_level;
 uint64_t link_down_time = 0;
 uint32_t link_down_A = 0, link_down_B = 0;
 
@@ -545,10 +552,38 @@ bool ReadConf(string network_configuration) {
       conf >> flow_strategy;
     } else if (key.compare("PACKET_STRATEGY") == 0) {
       conf >> packet_strategy;
+    } else if (key.compare("ARN_PACKET_STRATEGY") == 0) {
+      conf >> arn_packet_strategy;
     } else if (key.compare("DEFAULT_FWD_MODE") == 0) {
       uint32_t v;
       conf >> v;
       default_fwd_mode = (uint8_t)v;
+    } else if (key.compare("ENABLE_ARN") == 0) {
+      uint32_t v;
+      conf >> v;
+      enable_arn = v != 0;
+    } else if (key.compare("ARN_INTERVAL") == 0) {
+      conf >> arn_interval_ns;
+    } else if (key.compare("ARN_INTERVAL_NS") == 0) {
+      conf >> arn_interval_ns;
+    } else if (key.compare("ARN_CONGESTION_QLEN") == 0) {
+      conf >> arn_congestion_qlen;
+    } else if (key.compare("CONGESTION_QLEN") == 0) {
+      conf >> arn_congestion_qlen;
+    } else if (key.compare("Q_LEVEL") == 0) {
+      int levels;
+      conf >> levels;
+      q_level = std::vector<uint64_t>(levels);
+      for (int i = 0; i < levels; i++) {
+        conf >> q_level[i];
+      }
+    } else if (key.compare("LOAD_LEVEL") == 0) {
+      int levels;
+      conf >> levels;
+      load_level = std::vector<uint64_t>(levels);
+      for (int i = 0; i < levels; i++) {
+        conf >> load_level[i];
+      }
     } else if (key.compare("DCTCP_RATE_AI") == 0) {
       conf >> dctcp_rate_ai;
     } else if (key.compare("NIC_TOTAL_PAUSE_TIME") == 0) {
@@ -870,6 +905,8 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
     if (n.Get(i)->GetNodeType() == 1) { // is switch
       Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(n.Get(i));
       uint32_t shift = 3; // by default 1/8
+      sw->q_level = q_level;
+      sw->load_level = load_level;
 
       for (uint32_t j = 1; j < sw->GetNDevices(); j++) {
         Ptr<QbbNetDevice> dev = DynamicCast<QbbNetDevice>(sw->GetDevice(j));
@@ -1002,6 +1039,14 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
       sw->SetAttribute("MaxRtt", UintegerValue(maxRtt));
       sw->SetAttribute("FlowStrategy", UintegerValue(flow_strategy));
       sw->SetAttribute("PacketStrategy", UintegerValue(packet_strategy));
+      sw->SetAttribute("ArnPacketStrategy", UintegerValue(arn_packet_strategy));
+      sw->SetAttribute("ArnEnabled", BooleanValue(enable_arn));
+      sw->SetAttribute("IsLeaf", BooleanValue(leafSwitchIds.find(i) != leafSwitchIds.end()));
+      sw->SetAttribute("IsSpine", BooleanValue(spineSwitchIds.find(i) != spineSwitchIds.end()));
+      sw->SetAttribute("ArnInterval", TimeValue(NanoSeconds(arn_interval_ns)));
+      sw->SetAttribute("CongestionQueueLength", UintegerValue(arn_congestion_qlen));
+      sw->q_level = q_level;
+      sw->load_level = load_level;
     }
   }
 

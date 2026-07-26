@@ -19,7 +19,18 @@ class SwitchNode : public Node{
 public:
 	// Forwarding strategy enums
 	enum FlowStrategy { FLOW_STRATEGY_ECMP = 0 };
-	enum PacketStrategy { PKT_STRATEGY_RR = 0 };
+	enum PacketStrategy {
+		PKT_STRATEGY_RR = 0,
+		PKT_STRATEGY_ARN_REJECT = 1,
+		PKT_STRATEGY_DLB = 2,
+		PKT_STRATEGY_GLB = 3
+	};
+	enum ArnPacketStrategy {
+		ARN_PKT_STRATEGY_SCALE = 0,
+		ARN_PKT_STRATEGY_REJECT = 1,
+		ARN_PKT_STRATEGY_DLB = 2,
+		ARN_PKT_STRATEGY_GLB = 3
+	};
 
 	static const uint32_t pCnt = 1025;	// Number of ports used
 	static const uint32_t qCnt = 8;	// Number of queues/priorities used
@@ -48,6 +59,7 @@ protected:
 	// Strategy configuration
 	uint32_t m_flowStrategy;
 	uint32_t m_packetStrategy;
+	uint32_t m_arnPacketStrategy;
 
 	// ARN congestion notification configuration.
 	bool m_arn;
@@ -60,12 +72,17 @@ private:
 	int GetOutDev(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevFlowECMP(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevPktSprayRR(Ptr<const Packet>, CustomHeader &ch);
+	int GetOutDevPktSprayArn(Ptr<const Packet>, CustomHeader &ch);
+	int GetOutDevRouteDlb(Ptr<const Packet>, CustomHeader &ch);
 	void SendToDev(Ptr<Packet>p, CustomHeader &ch);
 	static uint32_t EcmpHash(const uint8_t* key, size_t len, uint32_t seed);
 	void CheckAndSendPfc(uint32_t inDev, uint32_t qIndex);
 	void CheckAndSendResume(uint32_t inDev, uint32_t qIndex);
 	void CheckAndSendArn(uint32_t inDev, uint32_t outDev, uint32_t qIndex, Ptr<Packet> p, CustomHeader &ch);
+	bool IsActiveArn(const ArnHeader::FlowInfo &flowInfo) const;
+	uint32_t GetArnPathCost(uint32_t dstLeafId, uint32_t outDev) const;
 	uint32_t GetQLevel(uint64_t qlen) const;
+	uint32_t GetLoadLevel(double load) const;
 	bool ResolveLeafNode(uint32_t ip, Ptr<Node>& leafNode) const;
 	bool IsSpineIngress(uint32_t inDev) const;
 	bool HasHostNeighbor() const;
@@ -86,6 +103,7 @@ public:
 	typedef std::unordered_map<uint32_t, uint64_t> arn_clear_ts;
 	std::unordered_map<uint32_t, std::tuple<port_table_profile, arn_effect_ts, arn_clear_ts> > m_arn_receive;
 	std::vector<uint64_t> q_level;
+	std::vector<uint64_t> load_level;
 
 	static TypeId GetTypeId (void);
 	SwitchNode();
