@@ -410,13 +410,14 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
     if enable_arn not in (0, 1):
         raise ScenarioError("network.enable_arn must be 0 or 1")
     arn_packet_strategy = require_int(
-        network.get("arn_packet_strategy", packet_strategy if enable_arn else 0),
+        network.get("arn_packet_strategy", 0),
         "network.arn_packet_strategy",
     )
-    if not enable_arn and packet_strategy != 0:
-        raise ScenarioError("network.packet_strategy currently supports only 0")
-    if enable_arn and packet_strategy not in (0, 1, 2, 3):
-        raise ScenarioError("network.packet_strategy must be 0, 1, 2, or 3 when ARN is enabled")
+    if packet_strategy != 0:
+        raise ScenarioError(
+            "network.packet_strategy currently supports only 0; use "
+            "network.arn_packet_strategy for ARN_SCALE/ARN_REJECT/DLB/GLB"
+        )
     if arn_packet_strategy not in (0, 1, 2, 3):
         raise ScenarioError("network.arn_packet_strategy must be 0, 1, 2, or 3")
     arn_interval_ns = require_int(

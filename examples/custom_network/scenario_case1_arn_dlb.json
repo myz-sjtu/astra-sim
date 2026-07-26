@@ -110,16 +110,16 @@
   ],
   "flows": [
     {
-      "src": 3,
-      "dst": 4,
+      "src": 4,
+      "dst": 3,
       "bytes": 100000000,
       "tag": 1,
       "start_time_s": 2,
       "strategy": 0
     },
     {
-      "src": 6,
-      "dst": 5,
+      "src": 5,
+      "dst": 6,
       "bytes": 100000000,
       "tag": 2,
       "start_time_s": 2,
@@ -130,16 +130,16 @@
     "default_fwd_mode": 1,
     "flow_strategy": 0,
     "packet_strategy": 0,
-    "arn_packet_strategy": 1,
+    "arn_packet_strategy": 2,
     "enable_arn": 1,
-    "arn_interval_ns": 10000,
-    "arn_congestion_qlen": 6400,
+    "arn_interval_ns": 1000,
+    "arn_congestion_qlen": 100000,
     "enable_trace": 0,
     "qlen_mon_start_ns": 2000000000,
     "qlen_mon_end_ns": 3000000000,
     "qlen_mon_interval_ns": 100000,
-    "q_level": [0, 6400],
-    "load_level": [0, 50000000000],
+    "q_level": [0, 100000, 200000, 300000, 400000, 500000, 600000, 700000],
+    "load_level": [0, 12500000000, 25000000000, 40000000000, 41000000000, 45000000000, 48000000000, 49000000000],
     "ecn_thresholds": [
       {
         "bandwidth": "400Gbps",

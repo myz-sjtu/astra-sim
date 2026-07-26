@@ -44,8 +44,8 @@ The supported generated pattern is `half_doubling_allreduce`:
 
 - `default_fwd_mode`: default flow forwarding mode. `0` is flow ECMP, `1` is packet spray.
 - `flow_strategy`: flow routing strategy. Currently only `0` is supported.
-- `packet_strategy`: packet-spray routing strategy. When `enable_arn` is `0`, currently only `0` is round-robin. When `enable_arn` is `1`, HPCC ARN numbering is used: `0=ARN_SCALE`, `1=ARN_REJECT`, `2=DLB`, `3=GLB`.
-- `arn_packet_strategy`: backward-compatible ARN strategy field. New ARN packet-spray scenarios should keep it equal to `packet_strategy`; `packet_strategy` is the authoritative selector.
+- `packet_strategy`: packet-spray routing strategy used when `enable_arn` is `0`. Currently only `0` is round-robin.
+- `arn_packet_strategy`: packet-spray routing strategy used when `enable_arn` is `1`. HPCC ARN numbering is used: `0=ARN_SCALE`, `1=ARN_REJECT`, `2=DLB`, `3=GLB`.
 - `enable_arn`: `0` disables ARN and uses ARN-off packet spray; `1` enables ARN generation and ARN packet-spray strategies.
 - `arn_interval_ns`: minimum repeated ARN notification interval in ns.
 - `arn_congestion_qlen`: ARN trigger queue threshold in bytes.
@@ -61,7 +61,7 @@ The supported generated pattern is `half_doubling_allreduce`:
 "network": {
   "default_fwd_mode": 1,
   "flow_strategy": 0,
-  "packet_strategy": 2,
+  "packet_strategy": 0,
   "arn_packet_strategy": 2,
   "enable_arn": 1,
   "arn_interval_ns": 10000,
@@ -84,8 +84,12 @@ The supported generated pattern is `half_doubling_allreduce`:
 ```
 
 This configuration sends flows with packet spray by default and uses HPCC-style
-DLB (`packet_strategy=2`): each packet chooses among equal-cost next hops using
+DLB (`arn_packet_strategy=2`): each packet chooses among equal-cost next hops using
 the lowest local `q_level + load_level`, with random tie-breaking.
+
+Use `arn_packet_strategy=1` for ARN_REJECT. It avoids ARN-marked next hops for
+the corresponding source-leaf/destination-leaf pair while preserving at least
+one available path.
 
 ## Generate Inputs
 

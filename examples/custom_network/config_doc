@@ -15,19 +15,19 @@ rewrites path and selected runtime keys into `generated/<scenario>/network_confi
 
 - `DEFAULT_FWD_MODE`: default per-flow forwarding mode. `0` means flow ECMP, `1` means packet spray. A flow row can override this through its `strategy` value.
 - `FLOW_STRATEGY`: flow-based routing strategy. Currently `0` is ECMP.
-- `PACKET_STRATEGY`: packet-spray routing strategy. With `ENABLE_ARN 0`, currently only `0` is round-robin. With `ENABLE_ARN 1`, `2` enables HPCC-style DLB.
-- `ARN_PACKET_STRATEGY`: backward-compatible ARN strategy field; `PACKET_STRATEGY` is authoritative for ARN packet-spray selection.
+- `PACKET_STRATEGY`: packet-spray routing strategy used when `ENABLE_ARN 0`. Currently only `0` is round-robin.
+- `ARN_PACKET_STRATEGY`: packet-spray routing strategy used when `ENABLE_ARN 1`. HPCC ARN numbering is used: `0=ARN_SCALE`, `1=ARN_REJECT`, `2=DLB`, `3=GLB`.
 - `ENABLE_ARN`: ARN feature switch. `0` disables ARN generation and uses ARN-off packet spray. `1` enables ARN notification handling and ARN packet-spray strategies.
 - `ARN_INTERVAL`: minimum interval in ns between repeated ARN notifications for the same path.
 - `ARN_CONGESTION_QLEN`: egress queue length threshold in bytes used to trigger ARN. The clear threshold is `7/8 * ARN_CONGESTION_QLEN`.
 - `Q_LEVEL`: ascending queue-length thresholds used to discretize local queue quality.
 - `LOAD_LEVEL`: ascending byte-per-second thresholds used to discretize HPCC `calcBandwidth` quality.
 
-When ARN is enabled, `PACKET_STRATEGY` follows HPCC ARN numbering: `0=ARN_SCALE`, `1=ARN_REJECT`, `2=DLB`, `3=GLB`. This branch implements DLB first.
+When ARN is enabled, `ARN_PACKET_STRATEGY` is the authoritative selector. `PACKET_STRATEGY` remains the ARN-off packet-spray selector and should normally stay `0`.
 
 ## ARN-Aware Selection
 
-When ARN is enabled, congested leaf or spine switches emit ARN packets for packet-spray data traffic. With `PACKET_STRATEGY 2`, DLB chooses the lowest local `q_level + load_level` among equal-cost next hops and randomly breaks ties.
+When ARN is enabled, congested leaf or spine switches emit ARN packets for packet-spray data traffic. With `ARN_PACKET_STRATEGY 1`, ARN_REJECT avoids ARN-marked next hops while preserving at least one available path. With `ARN_PACKET_STRATEGY 2`, DLB chooses the lowest local `q_level + load_level` among equal-cost next hops and randomly breaks ties. With `ARN_PACKET_STRATEGY 3`, GLB runs on leaf switches after ARN state is available and chooses the lowest `local q/load + remote ARN q/load`; spines and leaf switches without ARN state fall back to packet spray.
 
 ## Example
 

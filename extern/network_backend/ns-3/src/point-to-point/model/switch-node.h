@@ -20,10 +20,7 @@ public:
 	// Forwarding strategy enums
 	enum FlowStrategy { FLOW_STRATEGY_ECMP = 0 };
 	enum PacketStrategy {
-		PKT_STRATEGY_RR = 0,
-		PKT_STRATEGY_ARN_REJECT = 1,
-		PKT_STRATEGY_DLB = 2,
-		PKT_STRATEGY_GLB = 3
+		PKT_STRATEGY_RR = 0
 	};
 	enum ArnPacketStrategy {
 		ARN_PKT_STRATEGY_SCALE = 0,
@@ -73,14 +70,22 @@ private:
 	int GetOutDevFlowECMP(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevPktSprayRR(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevPktSprayArn(Ptr<const Packet>, CustomHeader &ch);
+	int GetOutDevRouteArnReject(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevRouteDlb(Ptr<const Packet>, CustomHeader &ch);
+	int GetOutDevRouteGlb(Ptr<const Packet>, CustomHeader &ch);
 	void SendToDev(Ptr<Packet>p, CustomHeader &ch);
 	static uint32_t EcmpHash(const uint8_t* key, size_t len, uint32_t seed);
 	void CheckAndSendPfc(uint32_t inDev, uint32_t qIndex);
 	void CheckAndSendResume(uint32_t inDev, uint32_t qIndex);
 	void CheckAndSendArn(uint32_t inDev, uint32_t outDev, uint32_t qIndex, Ptr<Packet> p, CustomHeader &ch);
+	void AddRejectFlowTable(CustomHeader &ch, uint32_t rejectedPort);
+	void ClearRejectFlowTable(CustomHeader &ch, uint32_t rejectedPort);
 	bool IsActiveArn(const ArnHeader::FlowInfo &flowInfo) const;
 	uint32_t GetArnPathCost(uint32_t dstLeafId, uint32_t outDev) const;
+	uint32_t GetArnPathQuality(uint32_t dstLeafId,
+	                           uint32_t outDev,
+	                           uint32_t *qLevel = nullptr,
+	                           uint32_t *loadLevel = nullptr) const;
 	uint32_t GetQLevel(uint64_t qlen) const;
 	uint32_t GetLoadLevel(double load) const;
 	bool ResolveLeafNode(uint32_t ip, Ptr<Node>& leafNode) const;
@@ -97,6 +102,7 @@ public:
 	std::unordered_map<uint32_t, uint32_t> m_nodeToIf;
 	std::unordered_map<uint32_t, Ptr<Node> > m_ifToNode;
 	std::unordered_map<ArnHeader::FlowKey, ArnHeader::FlowInfo, ArnHeader::FlowKeyHash> m_arn_event;
+	std::unordered_map<ArnHeader::FlowKey, std::unordered_set<uint32_t>, ArnHeader::FlowKeyHash> m_arn_flow;
 
 	typedef std::unordered_map<uint32_t, ArnHeader::FlowInfo> port_table_profile;
 	typedef std::unordered_map<uint32_t, uint64_t> arn_effect_ts;

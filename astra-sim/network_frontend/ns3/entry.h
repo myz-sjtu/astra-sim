@@ -127,13 +127,13 @@ const char *fwd_mode_name(uint8_t fwd_mode) {
 const char *packet_strategy_name(uint32_t strategy) {
   switch (strategy) {
   case 0:
-    return "round-robin/arn-scale";
+    return "round-robin";
   case 1:
-    return "arn-reject";
+    return "unsupported";
   case 2:
-    return "dlb";
+    return "unsupported";
   case 3:
-    return "glb";
+    return "unsupported";
   default:
     return "unknown";
   }

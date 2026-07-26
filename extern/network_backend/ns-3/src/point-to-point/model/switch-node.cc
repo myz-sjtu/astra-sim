@@ -38,6 +38,15 @@ const char* ArnTypeName(uint32_t arnType) {
 	}
 }
 
+ArnHeader::FlowKey MakeArnRejectKey(uint32_t srcLeafId, uint32_t dstLeafId) {
+	ArnHeader::FlowKey flowKey;
+	flowKey.src = srcLeafId;
+	flowKey.dst = dstLeafId;
+	flowKey.sport = 0;
+	flowKey.dport = 0;
+	return flowKey;
+}
+
 } // namespace
 
 std::unordered_map<uint32_t, Ptr<Node> > SwitchNode::s_ipToLeafId;
@@ -78,7 +87,7 @@ TypeId SwitchNode::GetTypeId (void)
 			MakeUintegerAccessor(&SwitchNode::m_packetStrategy),
 			MakeUintegerChecker<uint32_t>())
 	.AddAttribute("ArnPacketStrategy",
-			"Packet-based forwarding strategy when ARN is enabled (0=ARN reject)",
+			"Packet-based forwarding strategy when ARN is enabled (0=ARN_SCALE, 1=ARN_REJECT, 2=DLB, 3=GLB)",
 			UintegerValue(0),
 			MakeUintegerAccessor(&SwitchNode::m_arnPacketStrategy),
 			MakeUintegerChecker<uint32_t>())
@@ -141,11 +150,14 @@ int SwitchNode::GetOutDev(Ptr<const Packet> p, CustomHeader &ch){
 	if (ch.l3Prot == 0x11 && ch.udp.fwd_mode == 1) {
 		// Packet spray mode
 		if (m_arn) {
-			switch (m_packetStrategy) {
-				case PKT_STRATEGY_DLB:
+			switch (m_arnPacketStrategy) {
+				case ARN_PKT_STRATEGY_REJECT:
+					return GetOutDevRouteArnReject(p, ch);
+				case ARN_PKT_STRATEGY_DLB:
 					return GetOutDevRouteDlb(p, ch);
-				case PKT_STRATEGY_RR:
-				case PKT_STRATEGY_ARN_REJECT:
+				case ARN_PKT_STRATEGY_GLB:
+					return GetOutDevRouteGlb(p, ch);
+				case ARN_PKT_STRATEGY_SCALE:
 				default:
 					return GetOutDevPktSprayArn(p, ch);
 			}
@@ -248,6 +260,46 @@ uint32_t SwitchNode::GetArnPathCost(uint32_t dstLeafId, uint32_t outDev) const {
 	return profileIt->second.q_level + 1;
 }
 
+uint32_t SwitchNode::GetArnPathQuality(uint32_t dstLeafId,
+                                       uint32_t outDev,
+                                       uint32_t *qLevel,
+                                       uint32_t *loadLevel) const {
+	if (qLevel != nullptr) {
+		*qLevel = 0;
+	}
+	if (loadLevel != nullptr) {
+		*loadLevel = 0;
+	}
+
+	auto receiveIt = m_arn_receive.find(dstLeafId);
+	if (receiveIt == m_arn_receive.end()) {
+		return 0;
+	}
+
+	const auto &profile = std::get<0>(receiveIt->second);
+	auto profileIt = profile.find(outDev);
+	if (profileIt == profile.end() || !IsActiveArn(profileIt->second)) {
+		return 0;
+	}
+
+	const auto &effectTs = std::get<1>(receiveIt->second);
+	const auto &clearTs = std::get<2>(receiveIt->second);
+	auto effectIt = effectTs.find(outDev);
+	auto clearIt = clearTs.find(outDev);
+	if (clearIt != clearTs.end() &&
+		(effectIt == effectTs.end() || clearIt->second >= effectIt->second)) {
+		return 0;
+	}
+
+	if (qLevel != nullptr) {
+		*qLevel = profileIt->second.q_level;
+	}
+	if (loadLevel != nullptr) {
+		*loadLevel = profileIt->second.load_level;
+	}
+	return profileIt->second.q_level + profileIt->second.load_level;
+}
+
 int SwitchNode::GetOutDevPktSprayArn(Ptr<const Packet> p, CustomHeader &ch){
 	auto entry = m_rtTable.find(ch.dip);
 	if (entry == m_rtTable.end())
@@ -294,6 +346,50 @@ int SwitchNode::GetOutDevPktSprayArn(Ptr<const Packet> p, CustomHeader &ch){
 	return bestNexthops[idx];
 }
 
+int SwitchNode::GetOutDevRouteArnReject(Ptr<const Packet> p, CustomHeader &ch) {
+	auto entry = m_rtTable.find(ch.dip);
+	if (entry == m_rtTable.end()) {
+		return -1;
+	}
+
+	auto &nexthops = entry->second;
+	if (nexthops.empty()) {
+		return -1;
+	}
+
+	if (!m_arn || !IsLeafSwitch() || nexthops.size() <= 1) {
+		return GetOutDevPktSprayRR(p, ch);
+	}
+
+	Ptr<Node> srcLeaf;
+	Ptr<Node> dstLeaf;
+	if (!ResolveLeafNode(ch.sip, srcLeaf) || srcLeaf == nullptr ||
+		!ResolveLeafNode(ch.dip, dstLeaf) || dstLeaf == nullptr) {
+		return GetOutDevPktSprayRR(p, ch);
+	}
+
+	ArnHeader::FlowKey flowKey = MakeArnRejectKey(srcLeaf->GetId(), dstLeaf->GetId());
+	auto rejectIt = m_arn_flow.find(flowKey);
+	if (rejectIt == m_arn_flow.end() || rejectIt->second.empty()) {
+		return GetOutDevPktSprayRR(p, ch);
+	}
+
+	std::vector<int> available;
+	for (int nexthop : nexthops) {
+		if (rejectIt->second.find(static_cast<uint32_t>(nexthop)) == rejectIt->second.end()) {
+			available.push_back(nexthop);
+		}
+	}
+
+	if (available.empty()) {
+		return GetOutDevPktSprayRR(p, ch);
+	}
+
+	Ptr<UniformRandomVariable> rng = CreateObject<UniformRandomVariable>();
+	uint32_t idx = rng->GetInteger(0, static_cast<uint32_t>(available.size() - 1));
+	return available[idx];
+}
+
 int SwitchNode::GetOutDevRouteDlb(Ptr<const Packet> p, CustomHeader &ch) {
 	auto entry = m_rtTable.find(ch.dip);
 	if (entry == m_rtTable.end()) {
@@ -336,6 +432,101 @@ int SwitchNode::GetOutDevRouteDlb(Ptr<const Packet> p, CustomHeader &ch) {
 	Ptr<UniformRandomVariable> rng = CreateObject<UniformRandomVariable>();
 	uint32_t idx = rng->GetInteger(0, goodNexthops.size() - 1);
 	target = goodNexthops[idx];
+	return target;
+}
+
+int SwitchNode::GetOutDevRouteGlb(Ptr<const Packet> p, CustomHeader &ch) {
+	auto entry = m_rtTable.find(ch.dip);
+	if (entry == m_rtTable.end()) {
+		return -1;
+	}
+
+	auto &nexthops = entry->second;
+	if (nexthops.empty()) {
+		return -1;
+	}
+
+	if (!m_arn || !IsLeafSwitch()) {
+		return GetOutDevPktSprayRR(p, ch);
+	}
+
+	Ptr<Node> dstLeaf;
+	if (!ResolveLeafNode(ch.dip, dstLeaf) || dstLeaf == nullptr) {
+		return GetOutDevPktSprayRR(p, ch);
+	}
+
+	uint32_t dstLeafId = dstLeaf->GetId();
+	auto receiveIt = m_arn_receive.find(dstLeafId);
+	if (receiveIt == m_arn_receive.end() || std::get<0>(receiveIt->second).empty()) {
+		return GetOutDevPktSprayRR(p, ch);
+	}
+
+	struct GlbCandidate {
+		int nexthop;
+		uint32_t localQLevel;
+		uint32_t localLoadLevel;
+		uint32_t remoteQLevel;
+		uint32_t remoteLoadLevel;
+		uint32_t totalQuality;
+	};
+
+	std::vector<GlbCandidate> candidates;
+	std::vector<int> bestNexthops;
+	uint32_t bestQuality = std::numeric_limits<uint32_t>::max();
+
+	for (const auto &nexthop : nexthops) {
+		uint64_t qLen = m_mmu->egress_bytes[nexthop][ch.udp.pg];
+		uint32_t localQLevel = GetQLevel(qLen);
+
+		Ptr<QbbNetDevice> dev = DynamicCast<QbbNetDevice>(m_devices[nexthop]);
+		double load = dev == nullptr ? 0 : dev->calcBandwidth;
+		uint32_t localLoadLevel = GetLoadLevel(load);
+
+		uint32_t remoteQLevel = 0;
+		uint32_t remoteLoadLevel = 0;
+		uint32_t remoteQuality = GetArnPathQuality(dstLeafId,
+		                                           static_cast<uint32_t>(nexthop),
+		                                           &remoteQLevel,
+		                                           &remoteLoadLevel);
+		uint32_t totalQuality = localQLevel + localLoadLevel + remoteQuality;
+		candidates.push_back({nexthop,
+		                      localQLevel,
+		                      localLoadLevel,
+		                      remoteQLevel,
+		                      remoteLoadLevel,
+		                      totalQuality});
+
+		if (totalQuality < bestQuality) {
+			bestNexthops.clear();
+			bestNexthops.emplace_back(nexthop);
+			bestQuality = totalQuality;
+		} else if (totalQuality == bestQuality) {
+			bestNexthops.emplace_back(nexthop);
+		}
+	}
+
+	if (bestNexthops.empty()) {
+		return GetOutDevPktSprayRR(p, ch);
+	}
+
+	Ptr<UniformRandomVariable> rng = CreateObject<UniformRandomVariable>();
+	int target = bestNexthops[rng->GetInteger(0, bestNexthops.size() - 1)];
+
+	/* for (const auto &candidate : candidates) {
+		std::cout << "[ARN][glb-route]"
+				  << " time_ns=" << Simulator::Now().GetTimeStep()
+				  << " switch=" << GetId()
+				  << " dstLeaf=" << dstLeafId
+				  << " nexthop=" << candidate.nexthop
+				  << " local_q=" << candidate.localQLevel
+				  << " local_load=" << candidate.localLoadLevel
+				  << " remote_q=" << candidate.remoteQLevel
+				  << " remote_load=" << candidate.remoteLoadLevel
+				  << " total=" << candidate.totalQuality
+				  << " selected=" << (candidate.nexthop == target ? 1 : 0)
+				  << std::endl;
+	} */
+
 	return target;
 }
 
@@ -603,6 +794,14 @@ bool SwitchNode::SwitchReceiveArn(Ptr<NetDevice> device, Ptr<Packet> packet, Cus
 		std::get<2>(m_arn_receive[dstLeafId])[congestedPath] = Simulator::Now().GetTimeStep();
 	}
 
+	if (m_arnPacketStrategy == ARN_PKT_STRATEGY_REJECT) {
+		if (flowInfo.arn_type == ArnHeader::REMOTE_ARN || flowInfo.arn_type == ArnHeader::LOCAL_ARN) {
+			AddRejectFlowTable(ch, congestedPath);
+		} else if (flowInfo.arn_type == ArnHeader::REMOTE_CLEAR || flowInfo.arn_type == ArnHeader::LOCAL_CLEAR) {
+			ClearRejectFlowTable(ch, congestedPath);
+		}
+	}
+
 	std::cout << "[ARN][source-leaf-read] time_ns=" << Simulator::Now().GetTimeStep()
 			  << " switch=" << GetId()
 			  << " congestedPath=" << congestedPath
@@ -620,6 +819,98 @@ bool SwitchNode::SwitchReceiveArn(Ptr<NetDevice> device, Ptr<Packet> packet, Cus
 			  << std::endl;
 
 	return true;
+}
+
+void SwitchNode::AddRejectFlowTable(CustomHeader &ch, uint32_t rejectedPort) {
+	ArnHeader::FlowKey flowKey = MakeArnRejectKey(ch.arn.flowKey.dst, ch.arn.flowKey.src);
+
+	auto routeIt = m_rtTable.find(ch.sip);
+	if (routeIt == m_rtTable.end()) {
+		return;
+	}
+
+	const auto &nexthops = routeIt->second;
+	if (nexthops.size() <= 1) {
+		return;
+	}
+
+	uint32_t portToReject = rejectedPort;
+	bool portIsCandidate = false;
+	for (int nexthop : nexthops) {
+		if (static_cast<uint32_t>(nexthop) == portToReject) {
+			portIsCandidate = true;
+			break;
+		}
+	}
+
+	if (!portIsCandidate) {
+		portToReject = ch.arn.flowKey.sport;
+		for (int nexthop : nexthops) {
+			if (static_cast<uint32_t>(nexthop) == portToReject) {
+				portIsCandidate = true;
+				break;
+			}
+		}
+	}
+
+	if (!portIsCandidate) {
+		return;
+	}
+
+	auto rejectIt = m_arn_flow.find(flowKey);
+	if (rejectIt != m_arn_flow.end() && rejectIt->second.find(portToReject) != rejectIt->second.end()) {
+		return;
+	}
+
+	uint32_t remainingAfterInsert = 0;
+	for (int nexthop : nexthops) {
+		uint32_t port = static_cast<uint32_t>(nexthop);
+		if (port == portToReject) {
+			continue;
+		}
+		if (rejectIt == m_arn_flow.end() || rejectIt->second.find(port) == rejectIt->second.end()) {
+			remainingAfterInsert++;
+		}
+	}
+
+	if (remainingAfterInsert == 0) {
+		return;
+	}
+
+	m_arn_flow[flowKey].insert(portToReject);
+	std::cout << "[ARN][reject-add] time_ns=" << Simulator::Now().GetTimeStep()
+			  << " switch=" << GetId()
+			  << " srcLeaf=" << flowKey.src
+			  << " dstLeaf=" << flowKey.dst
+			  << " port=" << portToReject
+			  << " remaining=" << remainingAfterInsert
+			  << std::endl;
+}
+
+void SwitchNode::ClearRejectFlowTable(CustomHeader &ch, uint32_t rejectedPort) {
+	ArnHeader::FlowKey flowKey = MakeArnRejectKey(ch.arn.flowKey.dst, ch.arn.flowKey.src);
+	auto rejectIt = m_arn_flow.find(flowKey);
+	if (rejectIt == m_arn_flow.end()) {
+		return;
+	}
+
+	size_t erased = rejectIt->second.erase(rejectedPort);
+	if (rejectedPort != ch.arn.flowKey.sport) {
+		erased += rejectIt->second.erase(ch.arn.flowKey.sport);
+	}
+
+	if (rejectIt->second.empty()) {
+		m_arn_flow.erase(rejectIt);
+	}
+
+	if (erased > 0) {
+		std::cout << "[ARN][reject-clear] time_ns=" << Simulator::Now().GetTimeStep()
+				  << " switch=" << GetId()
+				  << " srcLeaf=" << flowKey.src
+				  << " dstLeaf=" << flowKey.dst
+				  << " port=" << rejectedPort
+				  << std::endl;
+	}
 }
 
 void SwitchNode::SendToDev(Ptr<Packet>p, CustomHeader &ch){

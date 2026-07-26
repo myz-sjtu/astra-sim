@@ -78,8 +78,8 @@ int nic_total_pause_time =
 
 uint32_t ack_high_prio = 0;
 uint32_t flow_strategy = 0;  // Flow-based forwarding strategy: 0=ECMP
-uint32_t packet_strategy = 0; // Packet spray strategy. ARN on: 0=ARN_SCALE, 1=ARN_REJECT, 2=DLB, 3=GLB
-uint32_t arn_packet_strategy = 0; // Backward-compatible alias; PacketStrategy is authoritative when ARN is on.
+uint32_t packet_strategy = 0; // Packet spray strategy when ARN is off. Currently 0=RoundRobin.
+uint32_t arn_packet_strategy = 0; // Packet spray strategy when ARN is on: 0=ARN_SCALE, 1=ARN_REJECT, 2=DLB, 3=GLB.
 uint8_t default_fwd_mode = 0; // Default forwarding mode for all flows: 0=flow-based, 1=packet spray
 bool enable_arn = false;
 uint64_t arn_interval_ns = 10000;
