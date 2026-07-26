@@ -364,7 +364,8 @@ int setup_ns3_simulation(string network_configuration) {
        << packet_strategy_name(packet_strategy) << "), ENABLE_ARN="
        << enable_arn << ", ARN_PACKET_STRATEGY=" << arn_packet_strategy
        << " (" << arn_packet_strategy_name(arn_packet_strategy)
-       << "), ARN_INTERVAL=" << arn_interval_ns
+       << "), ARN_SCALE_SIZE=" << arn_scale_size
+       << ", ARN_INTERVAL=" << arn_interval_ns
        << ", ARN_CONGESTION_QLEN=" << arn_congestion_qlen << "\n";
   cout << "[AstraSimNetwork] input files: TOPOLOGY_FILE=" << topology_file
        << ", FLOW_FILE=" << flow_file << ", TRACE_FILE=" << trace_file << "\n";

@@ -70,9 +70,13 @@ private:
 	int GetOutDevFlowECMP(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevPktSprayRR(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevPktSprayArn(Ptr<const Packet>, CustomHeader &ch);
+	int GetOutDevRouteArnScale(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevRouteArnReject(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevRouteDlb(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevRouteGlb(Ptr<const Packet>, CustomHeader &ch);
+	void PrepareArnScaleBitmap();
+	void UpdateArnScaleBitmap(CustomHeader &ch, uint32_t congestedPath);
+	uint32_t CountArnScaleSlots(const std::vector<int> &nexthops) const;
 	void SendToDev(Ptr<Packet>p, CustomHeader &ch);
 	static uint32_t EcmpHash(const uint8_t* key, size_t len, uint32_t seed);
 	void CheckAndSendPfc(uint32_t inDev, uint32_t qIndex);
@@ -108,6 +112,11 @@ public:
 	typedef std::unordered_map<uint32_t, uint64_t> arn_effect_ts;
 	typedef std::unordered_map<uint32_t, uint64_t> arn_clear_ts;
 	std::unordered_map<uint32_t, std::tuple<port_table_profile, arn_effect_ts, arn_clear_ts> > m_arn_receive;
+	std::vector<bool> m_arnScaleBitmap;
+	uint32_t m_arnScaleSize = 4;
+	std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t> > m_arnScaleLastPort;
+	std::unordered_map<uint32_t, uint64_t> m_arnScaleEffectTs;
+	std::unordered_map<uint32_t, uint64_t> m_arnScaleClearTs;
 	std::vector<uint64_t> q_level;
 	std::vector<uint64_t> load_level;
 
@@ -118,6 +127,7 @@ public:
 	void AddNodeEntry(uint32_t intf_idx, Ptr<Node> node);
 	void AddInterfaceEntry(uint32_t node_id, uint32_t intf_idx);
 	void ClearTable();
+	void RefreshArnScaleBitmap();
 	bool SwitchReceiveFromDevice(Ptr<NetDevice> device, Ptr<Packet> packet, CustomHeader &ch);
 	bool SwitchReceiveArn(Ptr<NetDevice> device, Ptr<Packet> packet, CustomHeader &ch, uint32_t congestedPath);
 	void SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Packet> p);

@@ -420,6 +420,9 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
         )
     if arn_packet_strategy not in (0, 1, 2, 3):
         raise ScenarioError("network.arn_packet_strategy must be 0, 1, 2, or 3")
+    arn_scale_size = require_int(
+        network.get("arn_scale_size", 4), "network.arn_scale_size", 1
+    )
     arn_interval_ns = require_int(
         network.get("arn_interval_ns", 10_000), "network.arn_interval_ns", 1
     )
@@ -509,6 +512,7 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
             "flow_strategy": flow_strategy,
             "packet_strategy": packet_strategy,
             "arn_packet_strategy": arn_packet_strategy,
+            "arn_scale_size": arn_scale_size,
             "enable_arn": enable_arn,
             "arn_interval_ns": arn_interval_ns,
             "arn_congestion_qlen": arn_congestion_qlen,
@@ -764,6 +768,7 @@ def generate(
         "FLOW_STRATEGY": str(network["flow_strategy"]),
         "PACKET_STRATEGY": str(network["packet_strategy"]),
         "ARN_PACKET_STRATEGY": str(network["arn_packet_strategy"]),
+        "ARN_SCALE_SIZE": str(network["arn_scale_size"]),
         "DEFAULT_FWD_MODE": str(network["default_fwd_mode"]),
         "ENABLE_ARN": str(network["enable_arn"]),
         "ARN_INTERVAL": str(network["arn_interval_ns"]),

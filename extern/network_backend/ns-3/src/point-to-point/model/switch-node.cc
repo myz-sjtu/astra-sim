@@ -13,6 +13,7 @@
 #include "ns3/simulator.h"
 #include "ns3/int-header.h"
 #include "ns3/random-variable-stream.h"
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -91,6 +92,11 @@ TypeId SwitchNode::GetTypeId (void)
 			UintegerValue(0),
 			MakeUintegerAccessor(&SwitchNode::m_arnPacketStrategy),
 			MakeUintegerChecker<uint32_t>())
+	.AddAttribute("ArnScaleSize",
+			"Number of ARN Scale slots per output port (0 is treated as 1).",
+			UintegerValue(4),
+			MakeUintegerAccessor(&SwitchNode::m_arnScaleSize),
+			MakeUintegerChecker<uint32_t>())
 	.AddAttribute("ArnEnabled",
 			"Enable ARN congestion notification for packet spray flows",
 			BooleanValue(false),
@@ -159,7 +165,7 @@ int SwitchNode::GetOutDev(Ptr<const Packet> p, CustomHeader &ch){
 					return GetOutDevRouteGlb(p, ch);
 				case ARN_PKT_STRATEGY_SCALE:
 				default:
-					return GetOutDevPktSprayArn(p, ch);
+					return GetOutDevRouteArnScale(p, ch);
 			}
 		} else {
 			switch (m_packetStrategy) {
@@ -344,6 +350,163 @@ int SwitchNode::GetOutDevPktSprayArn(Ptr<const Packet> p, CustomHeader &ch){
 	uint32_t idx = m_rrCounter[inDev] % bestNexthops.size();
 	m_rrCounter[inDev]++;
 	return bestNexthops[idx];
+}
+
+int SwitchNode::GetOutDevRouteArnScale(Ptr<const Packet> p, CustomHeader &ch) {
+	auto entry = m_rtTable.find(ch.dip);
+	if (entry == m_rtTable.end() || entry->second.empty()) {
+		return entry == m_rtTable.end() ? -1 : GetOutDevPktSprayRR(p, ch);
+	}
+
+	const std::vector<int> &nexthops = entry->second;
+	const uint32_t deviceCount = GetNDevices();
+	const uint32_t scaleSize = std::max(1u, m_arnScaleSize);
+	if (deviceCount == 0) {
+		return GetOutDevPktSprayRR(p, ch);
+	}
+	if (m_arnScaleBitmap.size() != static_cast<size_t>(deviceCount) * scaleSize) {
+		PrepareArnScaleBitmap();
+	}
+
+	const uint32_t nexthopCount = static_cast<uint32_t>(nexthops.size());
+	const uint32_t totalSlots = scaleSize * nexthopCount;
+	uint32_t start = 0;
+	auto lastIt = m_arnScaleLastPort.find(ch.dip);
+	if (lastIt != m_arnScaleLastPort.end()) {
+		const uint32_t lastSlot = lastIt->second.first % scaleSize;
+		const uint32_t lastNexthop = lastIt->second.second % nexthopCount;
+		start = (lastSlot * nexthopCount + lastNexthop + 1) % totalSlots;
+	}
+
+	for (uint32_t offset = 0; offset < totalSlots; ++offset) {
+		const uint32_t candidate = (start + offset) % totalSlots;
+		const uint32_t slot = candidate / nexthopCount;
+		const uint32_t nexthopIndex = candidate % nexthopCount;
+		const int outDev = nexthops[nexthopIndex];
+		if (outDev < 0 || static_cast<uint32_t>(outDev) >= deviceCount) {
+			continue;
+		}
+		if (m_arnScaleBitmap[static_cast<uint32_t>(outDev) + slot * deviceCount]) {
+			m_arnScaleLastPort[ch.dip] = std::make_pair(slot, nexthopIndex);
+			return outDev;
+		}
+	}
+
+	return GetOutDevPktSprayRR(p, ch);
+}
+
+void SwitchNode::PrepareArnScaleBitmap() {
+	const uint32_t deviceCount = GetNDevices();
+	const uint32_t scaleSize = std::max(1u, m_arnScaleSize);
+	m_arnScaleBitmap.assign(static_cast<size_t>(deviceCount) * scaleSize, false);
+	m_arnScaleLastPort.clear();
+
+	for (uint32_t port = 0; port < deviceCount; ++port) {
+		Ptr<NetDevice> device = GetDevice(port);
+		if (device == nullptr || !device->IsLinkUp()) {
+			continue;
+		}
+		for (uint32_t slot = 0; slot < scaleSize; ++slot) {
+			m_arnScaleBitmap[port + slot * deviceCount] = true;
+		}
+	}
+}
+
+uint32_t SwitchNode::CountArnScaleSlots(const std::vector<int> &nexthops) const {
+	const uint32_t deviceCount = GetNDevices();
+	const uint32_t scaleSize = std::max(1u, m_arnScaleSize);
+	if (m_arnScaleBitmap.size() != static_cast<size_t>(deviceCount) * scaleSize) {
+		return 0;
+	}
+
+	uint32_t count = 0;
+	for (int nexthop : nexthops) {
+		if (nexthop < 0 || static_cast<uint32_t>(nexthop) >= deviceCount) {
+			continue;
+		}
+		for (uint32_t slot = 0; slot < scaleSize; ++slot) {
+			count += m_arnScaleBitmap[static_cast<uint32_t>(nexthop) + slot * deviceCount];
+		}
+	}
+	return count;
+}
+
+void SwitchNode::UpdateArnScaleBitmap(CustomHeader &ch, uint32_t) {
+	auto routeIt = m_rtTable.find(ch.sip);
+	if (routeIt == m_rtTable.end() || routeIt->second.empty()) {
+		return;
+	}
+
+	const std::vector<int> &nexthops = routeIt->second;
+	const uint32_t deviceCount = GetNDevices();
+	const uint32_t scaleSize = std::max(1u, m_arnScaleSize);
+	if (m_arnScaleBitmap.size() != static_cast<size_t>(deviceCount) * scaleSize) {
+		PrepareArnScaleBitmap();
+	}
+
+	const uint32_t port = ch.arn.flowKey.sport;
+	if (port >= deviceCount || GetDevice(port) == nullptr || !GetDevice(port)->IsLinkUp() ||
+		std::find(nexthops.begin(), nexthops.end(), static_cast<int>(port)) == nexthops.end()) {
+		return;
+	}
+
+	const uint64_t now = Simulator::Now().GetTimeStep();
+	const uint64_t interval = static_cast<uint64_t>(m_arnInterval.GetTimeStep());
+	const uint32_t timestampKey = ch.arn.flowKey.src;
+	const uint32_t arnType = ch.arn.flowInfo.arn_type;
+	auto countPortSlots = [&]() {
+		uint32_t count = 0;
+		for (uint32_t slot = 0; slot < scaleSize; ++slot) {
+			count += m_arnScaleBitmap[port + slot * deviceCount];
+		}
+		return count;
+	};
+	if (arnType == ArnHeader::REMOTE_ARN || arnType == ArnHeader::LOCAL_ARN) {
+		auto effectIt = m_arnScaleEffectTs.find(timestampKey);
+		if (effectIt != m_arnScaleEffectTs.end() && now - effectIt->second < interval) {
+			return;
+		}
+		if (CountArnScaleSlots(nexthops) < 2) {
+			return;
+		}
+		for (uint32_t slot = scaleSize; slot > 0; --slot) {
+			const uint32_t bitmapIndex = port + (slot - 1) * deviceCount;
+			if (m_arnScaleBitmap[bitmapIndex]) {
+				m_arnScaleBitmap[bitmapIndex] = false;
+				m_arnScaleEffectTs[timestampKey] = now;
+				std::cout << "[ARN][scale-update] time_ns=" << now
+						  << " switch=" << GetId()
+						  << " action=decrease"
+						  << " type=" << ArnTypeName(arnType)
+						  << " port=" << port
+						  << " port_slots=" << countPortSlots()
+						  << " candidate_slots=" << CountArnScaleSlots(nexthops)
+						  << std::endl;
+				return;
+			}
+		}
+	} else if (arnType == ArnHeader::REMOTE_CLEAR || arnType == ArnHeader::LOCAL_CLEAR) {
+		auto clearIt = m_arnScaleClearTs.find(timestampKey);
+		if (clearIt != m_arnScaleClearTs.end() && now - clearIt->second < interval) {
+			return;
+		}
+		for (uint32_t slot = scaleSize; slot > 0; --slot) {
+			const uint32_t bitmapIndex = port + (slot - 1) * deviceCount;
+			if (!m_arnScaleBitmap[bitmapIndex]) {
+				m_arnScaleBitmap[bitmapIndex] = true;
+				m_arnScaleClearTs[timestampKey] = now;
+				std::cout << "[ARN][scale-update] time_ns=" << now
+						  << " switch=" << GetId()
+						  << " action=restore"
+						  << " type=" << ArnTypeName(arnType)
+						  << " port=" << port
+						  << " port_slots=" << countPortSlots()
+						  << " candidate_slots=" << CountArnScaleSlots(nexthops)
+						  << std::endl;
+				return;
+			}
+		}
+	}
 }
 
 int SwitchNode::GetOutDevRouteArnReject(Ptr<const Packet> p, CustomHeader &ch) {
@@ -800,6 +963,8 @@ bool SwitchNode::SwitchReceiveArn(Ptr<NetDevice> device, Ptr<Packet> packet, Cus
 		} else if (flowInfo.arn_type == ArnHeader::REMOTE_CLEAR || flowInfo.arn_type == ArnHeader::LOCAL_CLEAR) {
 			ClearRejectFlowTable(ch, congestedPath);
 		}
+	} else if (m_arnPacketStrategy == ARN_PKT_STRATEGY_SCALE) {
+		UpdateArnScaleBitmap(ch, congestedPath);
 	}
 
 	std::cout << "[ARN][source-leaf-read] time_ns=" << Simulator::Now().GetTimeStep()
@@ -1026,6 +1191,10 @@ void SwitchNode::AddInterfaceEntry(uint32_t node_id, uint32_t intf_idx) {
 
 void SwitchNode::ClearTable(){
 	m_rtTable.clear();
+}
+
+void SwitchNode::RefreshArnScaleBitmap() {
+	PrepareArnScaleBitmap();
 }
 
 // This function can only be called in switch mode

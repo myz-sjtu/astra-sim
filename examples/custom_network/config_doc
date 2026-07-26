@@ -17,6 +17,7 @@ rewrites path and selected runtime keys into `generated/<scenario>/network_confi
 - `FLOW_STRATEGY`: flow-based routing strategy. Currently `0` is ECMP.
 - `PACKET_STRATEGY`: packet-spray routing strategy used when `ENABLE_ARN 0`. Currently only `0` is round-robin.
 - `ARN_PACKET_STRATEGY`: packet-spray routing strategy used when `ENABLE_ARN 1`. HPCC ARN numbering is used: `0=ARN_SCALE`, `1=ARN_REJECT`, `2=DLB`, `3=GLB`.
+- `ARN_SCALE_SIZE`: number of bitmap weight slots per output port for `ARN_PACKET_STRATEGY 0`. The default is `4`; direct ns-3 config values below `1` are treated as `1`.
 - `ENABLE_ARN`: ARN feature switch. `0` disables ARN generation and uses ARN-off packet spray. `1` enables ARN notification handling and ARN packet-spray strategies.
 - `ARN_INTERVAL`: minimum interval in ns between repeated ARN notifications for the same path.
 - `ARN_CONGESTION_QLEN`: egress queue length threshold in bytes used to trigger ARN. The clear threshold is `7/8 * ARN_CONGESTION_QLEN`.
@@ -35,6 +36,7 @@ When ARN is enabled, congested leaf or spine switches emit ARN packets for packe
 FLOW_STRATEGY 0
 PACKET_STRATEGY 0
 ARN_PACKET_STRATEGY 0
+ARN_SCALE_SIZE 4
 DEFAULT_FWD_MODE 1
 ENABLE_ARN 1
 ARN_INTERVAL 10000

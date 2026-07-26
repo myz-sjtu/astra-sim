@@ -80,6 +80,7 @@ uint32_t ack_high_prio = 0;
 uint32_t flow_strategy = 0;  // Flow-based forwarding strategy: 0=ECMP
 uint32_t packet_strategy = 0; // Packet spray strategy when ARN is off. Currently 0=RoundRobin.
 uint32_t arn_packet_strategy = 0; // Packet spray strategy when ARN is on: 0=ARN_SCALE, 1=ARN_REJECT, 2=DLB, 3=GLB.
+uint32_t arn_scale_size = 4;
 uint8_t default_fwd_mode = 0; // Default forwarding mode for all flows: 0=flow-based, 1=packet spray
 bool enable_arn = false;
 uint64_t arn_interval_ns = 10000;
@@ -358,6 +359,10 @@ void SetRoutingEntries() {
       }
     }
   }
+  for (uint32_t i = 0; i < n.GetN(); i++) {
+    if (n.Get(i)->GetNodeType() == 1)
+      DynamicCast<SwitchNode>(n.Get(i))->RefreshArnScaleBitmap();
+  }
 }
 
 void PinningRoute(const NodeContainer &) {
@@ -554,6 +559,8 @@ bool ReadConf(string network_configuration) {
       conf >> packet_strategy;
     } else if (key.compare("ARN_PACKET_STRATEGY") == 0) {
       conf >> arn_packet_strategy;
+    } else if (key.compare("ARN_SCALE_SIZE") == 0) {
+      conf >> arn_scale_size;
     } else if (key.compare("DEFAULT_FWD_MODE") == 0) {
       uint32_t v;
       conf >> v;
@@ -1040,6 +1047,8 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
       sw->SetAttribute("FlowStrategy", UintegerValue(flow_strategy));
       sw->SetAttribute("PacketStrategy", UintegerValue(packet_strategy));
       sw->SetAttribute("ArnPacketStrategy", UintegerValue(arn_packet_strategy));
+      sw->SetAttribute("ArnScaleSize", UintegerValue(arn_scale_size));
+      sw->RefreshArnScaleBitmap();
       sw->SetAttribute("ArnEnabled", BooleanValue(enable_arn));
       sw->SetAttribute("IsLeaf", BooleanValue(leafSwitchIds.find(i) != leafSwitchIds.end()));
       sw->SetAttribute("IsSpine", BooleanValue(spineSwitchIds.find(i) != spineSwitchIds.end()));
