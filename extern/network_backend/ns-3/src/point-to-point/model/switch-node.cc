@@ -83,7 +83,7 @@ TypeId SwitchNode::GetTypeId (void)
 			MakeUintegerAccessor(&SwitchNode::m_flowStrategy),
 			MakeUintegerChecker<uint32_t>())
 	.AddAttribute("PacketStrategy",
-			"Packet-based forwarding strategy when ARN is disabled (0=RoundRobin)",
+			"Packet-based forwarding strategy when ARN is disabled (0=Random, 1=RoundRobin, 2=DLB)",
 			UintegerValue(0),
 			MakeUintegerAccessor(&SwitchNode::m_packetStrategy),
 			MakeUintegerChecker<uint32_t>())
@@ -169,6 +169,10 @@ int SwitchNode::GetOutDev(Ptr<const Packet> p, CustomHeader &ch){
 			}
 		} else {
 			switch (m_packetStrategy) {
+				case PKT_STRATEGY_RANDOM:
+					return GetOutDevPktSprayRandom(p, ch);
+				case PKT_STRATEGY_DLB:
+					return GetOutDevPktSprayDlb(p, ch);
 				case PKT_STRATEGY_RR:
 				default:
 					return GetOutDevPktSprayRR(p, ch);
@@ -194,6 +198,8 @@ int SwitchNode::GetOutDevFlowECMP(Ptr<const Packet> p, CustomHeader &ch){
 
 	// entry found
 	auto &nexthops = entry->second;
+	if (nexthops.empty())
+		return -1;
 
 	// pick one next hop based on hash
 	union {
@@ -213,6 +219,20 @@ int SwitchNode::GetOutDevFlowECMP(Ptr<const Packet> p, CustomHeader &ch){
 	return nexthops[idx];
 }
 
+int SwitchNode::GetOutDevPktSprayRandom(Ptr<const Packet>, CustomHeader &ch){
+	auto entry = m_rtTable.find(ch.dip);
+	if (entry == m_rtTable.end())
+		return -1;
+
+	auto &nexthops = entry->second;
+	if (nexthops.empty())
+		return -1;
+
+	Ptr<UniformRandomVariable> rng = CreateObject<UniformRandomVariable>();
+	uint32_t idx = rng->GetInteger(0, static_cast<uint32_t>(nexthops.size() - 1));
+	return nexthops[idx];
+}
+
 int SwitchNode::GetOutDevPktSprayRR(Ptr<const Packet> p, CustomHeader &ch){
 	// look up entries
 	auto entry = m_rtTable.find(ch.dip);
@@ -223,6 +243,8 @@ int SwitchNode::GetOutDevPktSprayRR(Ptr<const Packet> p, CustomHeader &ch){
 
 	// entry found
 	auto &nexthops = entry->second;
+	if (nexthops.empty())
+		return -1;
 
 	// get ingress port
 	FlowIdTag t;
@@ -234,6 +256,31 @@ int SwitchNode::GetOutDevPktSprayRR(Ptr<const Packet> p, CustomHeader &ch){
 	uint32_t idx = m_rrCounter[inDev] % nexthops.size();
 	m_rrCounter[inDev]++;
 	return nexthops[idx];
+}
+
+int SwitchNode::GetOutDevPktSprayDlb(Ptr<const Packet>, CustomHeader &ch){
+	auto entry = m_rtTable.find(ch.dip);
+	if (entry == m_rtTable.end())
+		return -1;
+
+	auto &nexthops = entry->second;
+	if (nexthops.empty() || ch.udp.pg >= qCnt)
+		return -1;
+
+	int target = -1;
+	uint32_t bestQueueBytes = std::numeric_limits<uint32_t>::max();
+	for (const auto &nexthop : nexthops) {
+		if (nexthop < 0 || static_cast<uint32_t>(nexthop) >= pCnt) {
+			continue;
+		}
+		uint32_t queueBytes = m_mmu->egress_bytes[static_cast<uint32_t>(nexthop)][ch.udp.pg];
+		if (target < 0 || queueBytes < bestQueueBytes) {
+			target = nexthop;
+			bestQueueBytes = queueBytes;
+		}
+	}
+
+	return target;
 }
 
 bool SwitchNode::IsActiveArn(const ArnHeader::FlowInfo &flowInfo) const {
@@ -304,52 +351,6 @@ uint32_t SwitchNode::GetArnPathQuality(uint32_t dstLeafId,
 		*loadLevel = profileIt->second.load_level;
 	}
 	return profileIt->second.q_level + profileIt->second.load_level;
-}
-
-int SwitchNode::GetOutDevPktSprayArn(Ptr<const Packet> p, CustomHeader &ch){
-	auto entry = m_rtTable.find(ch.dip);
-	if (entry == m_rtTable.end())
-		return -1;
-
-	auto &nexthops = entry->second;
-	if (nexthops.empty())
-		return -1;
-
-	if (!IsLeafSwitch())
-		return GetOutDevPktSprayRR(p, ch);
-
-	Ptr<Node> dstLeaf;
-	if (!ResolveLeafNode(ch.dip, dstLeaf) || dstLeaf == nullptr)
-		return GetOutDevPktSprayRR(p, ch);
-
-	uint32_t dstLeafId = dstLeaf->GetId();
-	if (m_arn_receive.find(dstLeafId) == m_arn_receive.end())
-		return GetOutDevPktSprayRR(p, ch);
-
-	FlowIdTag t;
-	uint32_t inDev = 0;
-	if (p->PeekPacketTag(t))
-		inDev = t.GetFlowId();
-
-	uint32_t bestCost = std::numeric_limits<uint32_t>::max();
-	std::vector<int> bestNexthops;
-	for (int outDev : nexthops) {
-		uint32_t cost = GetArnPathCost(dstLeafId, static_cast<uint32_t>(outDev));
-		if (cost < bestCost) {
-			bestCost = cost;
-			bestNexthops.clear();
-			bestNexthops.push_back(outDev);
-		} else if (cost == bestCost) {
-			bestNexthops.push_back(outDev);
-		}
-	}
-
-	if (bestNexthops.empty())
-		return GetOutDevPktSprayRR(p, ch);
-
-	uint32_t idx = m_rrCounter[inDev] % bestNexthops.size();
-	m_rrCounter[inDev]++;
-	return bestNexthops[idx];
 }
 
 int SwitchNode::GetOutDevRouteArnScale(Ptr<const Packet> p, CustomHeader &ch) {
@@ -675,7 +676,7 @@ int SwitchNode::GetOutDevRouteGlb(Ptr<const Packet> p, CustomHeader &ch) {
 	Ptr<UniformRandomVariable> rng = CreateObject<UniformRandomVariable>();
 	int target = bestNexthops[rng->GetInteger(0, bestNexthops.size() - 1)];
 
-	/* for (const auto &candidate : candidates) {
+	for (const auto &candidate : candidates) {
 		std::cout << "[ARN][glb-route]"
 				  << " time_ns=" << Simulator::Now().GetTimeStep()
 				  << " switch=" << GetId()
@@ -688,7 +689,7 @@ int SwitchNode::GetOutDevRouteGlb(Ptr<const Packet> p, CustomHeader &ch) {
 				  << " total=" << candidate.totalQuality
 				  << " selected=" << (candidate.nexthop == target ? 1 : 0)
 				  << std::endl;
-	} */
+	}
 
 	return target;
 }

@@ -413,11 +413,8 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
         network.get("arn_packet_strategy", 0),
         "network.arn_packet_strategy",
     )
-    if packet_strategy != 0:
-        raise ScenarioError(
-            "network.packet_strategy currently supports only 0; use "
-            "network.arn_packet_strategy for ARN_SCALE/ARN_REJECT/DLB/GLB"
-        )
+    if packet_strategy not in (0, 1, 2):
+        raise ScenarioError("network.packet_strategy must be 0, 1, or 2")
     if arn_packet_strategy not in (0, 1, 2, 3):
         raise ScenarioError("network.arn_packet_strategy must be 0, 1, 2, or 3")
     arn_scale_size = require_int(

@@ -127,13 +127,11 @@ const char *fwd_mode_name(uint8_t fwd_mode) {
 const char *packet_strategy_name(uint32_t strategy) {
   switch (strategy) {
   case 0:
-    return "round-robin";
+    return "random";
   case 1:
-    return "unsupported";
+    return "round-robin";
   case 2:
-    return "unsupported";
-  case 3:
-    return "unsupported";
+    return "dlb";
   default:
     return "unknown";
   }

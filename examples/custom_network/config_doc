@@ -15,7 +15,7 @@ rewrites path and selected runtime keys into `generated/<scenario>/network_confi
 
 - `DEFAULT_FWD_MODE`: default per-flow forwarding mode. `0` means flow ECMP, `1` means packet spray. A flow row can override this through its `strategy` value.
 - `FLOW_STRATEGY`: flow-based routing strategy. Currently `0` is ECMP.
-- `PACKET_STRATEGY`: packet-spray routing strategy used when `ENABLE_ARN 0`. Currently only `0` is round-robin.
+- `PACKET_STRATEGY`: packet-spray routing strategy used when `ENABLE_ARN 0`. HPCC packet numbering is used: `0=Random`, `1=RoundRobin`, `2=DLB`.
 - `ARN_PACKET_STRATEGY`: packet-spray routing strategy used when `ENABLE_ARN 1`. HPCC ARN numbering is used: `0=ARN_SCALE`, `1=ARN_REJECT`, `2=DLB`, `3=GLB`.
 - `ARN_SCALE_SIZE`: number of bitmap weight slots per output port for `ARN_PACKET_STRATEGY 0`. The default is `4`; direct ns-3 config values below `1` are treated as `1`.
 - `ENABLE_ARN`: ARN feature switch. `0` disables ARN generation and uses ARN-off packet spray. `1` enables ARN notification handling and ARN packet-spray strategies.
@@ -24,7 +24,9 @@ rewrites path and selected runtime keys into `generated/<scenario>/network_confi
 - `Q_LEVEL`: ascending queue-length thresholds used to discretize local queue quality.
 - `LOAD_LEVEL`: ascending byte-per-second thresholds used to discretize HPCC `calcBandwidth` quality.
 
-When ARN is enabled, `ARN_PACKET_STRATEGY` is the authoritative selector. `PACKET_STRATEGY` remains the ARN-off packet-spray selector and should normally stay `0`.
+When ARN is disabled, `PACKET_STRATEGY` is the authoritative packet-spray selector. `PACKET_STRATEGY 2` is HPCC-style packet DLB: each packet selects the equal-cost next hop with the smallest raw `egress_bytes[nexthop][udp.pg]`; ties keep the first matching port in route-table order.
+
+When ARN is enabled, `ARN_PACKET_STRATEGY` is the authoritative selector. `PACKET_STRATEGY` remains the ARN-off packet-spray selector and is ignored by ARN-enabled packet spray.
 
 ## ARN-Aware Selection
 
@@ -34,11 +36,11 @@ When ARN is enabled, congested leaf or spine switches emit ARN packets for packe
 
 ```text
 FLOW_STRATEGY 0
-PACKET_STRATEGY 0
+PACKET_STRATEGY 2
 ARN_PACKET_STRATEGY 0
 ARN_SCALE_SIZE 4
 DEFAULT_FWD_MODE 1
-ENABLE_ARN 1
+ENABLE_ARN 0
 ARN_INTERVAL 10000
 ARN_CONGESTION_QLEN 5000000
 Q_LEVEL 2 0 5000000

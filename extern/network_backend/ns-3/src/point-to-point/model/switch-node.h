@@ -20,7 +20,9 @@ public:
 	// Forwarding strategy enums
 	enum FlowStrategy { FLOW_STRATEGY_ECMP = 0 };
 	enum PacketStrategy {
-		PKT_STRATEGY_RR = 0
+		PKT_STRATEGY_RANDOM = 0,
+		PKT_STRATEGY_RR = 1,
+		PKT_STRATEGY_DLB = 2
 	};
 	enum ArnPacketStrategy {
 		ARN_PKT_STRATEGY_SCALE = 0,
@@ -68,8 +70,9 @@ protected:
 private:
 	int GetOutDev(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevFlowECMP(Ptr<const Packet>, CustomHeader &ch);
+	int GetOutDevPktSprayRandom(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevPktSprayRR(Ptr<const Packet>, CustomHeader &ch);
-	int GetOutDevPktSprayArn(Ptr<const Packet>, CustomHeader &ch);
+	int GetOutDevPktSprayDlb(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevRouteArnScale(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevRouteArnReject(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevRouteDlb(Ptr<const Packet>, CustomHeader &ch);

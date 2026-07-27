@@ -44,7 +44,7 @@ The supported generated pattern is `half_doubling_allreduce`:
 
 - `default_fwd_mode`: default flow forwarding mode. `0` is flow ECMP, `1` is packet spray.
 - `flow_strategy`: flow routing strategy. Currently only `0` is supported.
-- `packet_strategy`: packet-spray routing strategy used when `enable_arn` is `0`. Currently only `0` is round-robin.
+- `packet_strategy`: packet-spray routing strategy used when `enable_arn` is `0`. HPCC packet numbering is used: `0=Random`, `1=RoundRobin`, `2=DLB`.
 - `arn_packet_strategy`: packet-spray routing strategy used when `enable_arn` is `1`. HPCC ARN numbering is used: `0=ARN_SCALE`, `1=ARN_REJECT`, `2=DLB`, `3=GLB`.
 - `arn_scale_size`: positive number of bitmap weight slots per output port for ARN Scale. Defaults to `4`.
 - `enable_arn`: `0` disables ARN and uses ARN-off packet spray; `1` enables ARN generation and ARN packet-spray strategies.
@@ -56,16 +56,16 @@ The supported generated pattern is `half_doubling_allreduce`:
 - `qlen_mon_start_ns`, `qlen_mon_end_ns`, `qlen_mon_interval_ns`: queue monitor timing in ns.
 - `ecn_thresholds`: per-bandwidth ECN threshold entries with `bandwidth`, `kmin`, `kmax`, and `pmax`.
 
-## ARN Scenario Example
+## ARN-Off Packet DLB Example
 
 ```json
 "network": {
   "default_fwd_mode": 1,
   "flow_strategy": 0,
-  "packet_strategy": 0,
-  "arn_packet_strategy": 2,
+  "packet_strategy": 2,
+  "arn_packet_strategy": 0,
   "arn_scale_size": 4,
-  "enable_arn": 1,
+  "enable_arn": 0,
   "arn_interval_ns": 10000,
   "arn_congestion_qlen": 5000000,
   "q_level": [0, 5000000],
@@ -85,9 +85,15 @@ The supported generated pattern is `half_doubling_allreduce`:
 }
 ```
 
-This configuration sends flows with packet spray by default and uses HPCC-style
-DLB (`arn_packet_strategy=2`): each packet chooses among equal-cost next hops using
-the lowest local `q_level + load_level`, with random tie-breaking.
+This ARN-off configuration sends flows with packet spray by default and uses
+HPCC-style packet DLB (`packet_strategy=2`): each packet chooses the equal-cost
+next hop with the smallest raw `egress_bytes[nexthop][udp.pg]`; ties keep the
+first route-table port.
+
+When `enable_arn=1`, `arn_packet_strategy` is used instead. ARN DLB
+(`arn_packet_strategy=2`) keeps the existing ARN-aware selector: it chooses the
+lowest local `q_level + load_level` among equal-cost next hops and randomly
+breaks ties.
 
 Use `arn_packet_strategy=1` for ARN_REJECT. It avoids ARN-marked next hops for
 the corresponding source-leaf/destination-leaf pair while preserving at least

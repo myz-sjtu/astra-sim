@@ -1,4 +1,4 @@
-# Minimal ASTRA-sim/ns-3 config for case1_arn_dlb.
+# Minimal ASTRA-sim/ns-3 config for case1_arn_reject.
 # Kept keys are consumed by extern/network_backend/ns-3/scratch/common.h.
 
 ENABLE_PFC 1

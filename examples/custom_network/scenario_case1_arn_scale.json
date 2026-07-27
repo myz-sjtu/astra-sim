@@ -131,7 +131,7 @@
     "flow_strategy": 0,
     "packet_strategy": 0,
     "arn_packet_strategy": 0,
-    "arn_scale_size": 8,
+    "arn_scale_size": 4,
     "enable_arn": 1,
     "arn_interval_ns": 1000,
     "arn_congestion_qlen": 100000,
