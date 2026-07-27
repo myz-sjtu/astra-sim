@@ -1,4 +1,4 @@
-# Minimal ASTRA-sim/ns-3 config for case2_arn_dlb.
+# Minimal ASTRA-sim/ns-3 config for case2.
 # Kept keys are consumed by extern/network_backend/ns-3/scratch/common.h.
 
 ENABLE_PFC 1
@@ -7,13 +7,13 @@ USE_DYNAMIC_PFC_THRESHOLD 0
 PAUSE_TIME 5
 PACKET_PAYLOAD_SIZE 1000
 
-TOPOLOGY_FILE ../../../examples/custom_network/generated/case2_arn_dlb/topology.txt
-FLOW_FILE ../../../examples/custom_network/generated/case2_arn_dlb/flow.txt
-TRACE_FILE ../../../examples/custom_network/generated/case2_arn_dlb/trace.txt
-TRACE_OUTPUT_FILE scratch/output/case2_arn_dlb/mix.tr
-FCT_OUTPUT_FILE scratch/output/case2_arn_dlb/fct.txt
-PFC_OUTPUT_FILE scratch/output/case2_arn_dlb/pfc.txt
-QLEN_MON_FILE scratch/output/case2_arn_dlb/qlen.txt
+TOPOLOGY_FILE ../../../examples/custom_network/generated/case2/topology.txt
+FLOW_FILE ../../../examples/custom_network/generated/case2/flow.txt
+TRACE_FILE ../../../examples/custom_network/generated/case2/trace.txt
+TRACE_OUTPUT_FILE scratch/output/case2/mix.tr
+FCT_OUTPUT_FILE scratch/output/case2/fct.txt
+PFC_OUTPUT_FILE scratch/output/case2/pfc.txt
+QLEN_MON_FILE scratch/output/case2/qlen.txt
 
 QLEN_MON_START 2000000000
 QLEN_MON_END 3000000000
@@ -51,11 +51,11 @@ NIC_TOTAL_PAUSE_TIME 0
 RATE_BOUND 1
 ACK_HIGH_PRIO 1
 FLOW_STRATEGY 0
-PACKET_STRATEGY 0
+PACKET_STRATEGY 2
 ARN_PACKET_STRATEGY 2
 ARN_SCALE_SIZE 4
 DEFAULT_FWD_MODE 1
-ENABLE_ARN 1
+ENABLE_ARN 0
 ARN_INTERVAL 2000
 ARN_CONGESTION_QLEN 1 300000
 Q_LEVEL 8 0 100000 200000 300000 400000 500000 600000 700000

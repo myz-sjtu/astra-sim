@@ -12,7 +12,7 @@ python3 examples/custom_network/generate_custom_inputs.py \
 echo "=== 进入 ns-3 目录并准备运行仿真 ==="
 cd /root/astra-sim/extern/network_backend/ns-3
 
-mkdir -p scratch/output/case2_arn_dlb   # 确保重定向日志的目录存在
+mkdir -p scratch/output/case2  # 确保重定向日志的目录存在
 
 echo "=== 启动 AstraSimNetwork 仿真 ==="
 ./ns3 run "AstraSimNetwork \
@@ -21,6 +21,6 @@ echo "=== 启动 AstraSimNetwork 仿真 ==="
   --network-configuration=../../../examples/custom_network/generated/case2/network_config.txt \
   --remote-memory-configuration=../../../examples/remote_memory/analytical/no_memory_expansion.json \
   --logical-topology-configuration=../../../examples/custom_network/generated/case2/logical_topology.json \
-  --comm-group-configuration=empty" > scratch/output/case2_arn_dlb/run.log 2>&1
+  --comm-group-configuration=empty" > scratch/output/case2/run.log 2>&1
 
-echo "=== 仿真完成，日志已保存至 scratch/output/case2_arn_dlb/run.log ==="
+echo "=== 仿真完成，日志已保存至 scratch/output/case2/run.log ==="

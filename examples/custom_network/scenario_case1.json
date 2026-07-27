@@ -130,7 +130,7 @@
     "default_fwd_mode": 1,
     "flow_strategy": 0,
     "packet_strategy": 0,
-    "arn_packet_strategy": 0,
+    "arn_packet_strategy": 1,
     "enable_arn": 0,
     "arn_interval_ns": 10000,
     "arn_congestion_qlen": 6400,

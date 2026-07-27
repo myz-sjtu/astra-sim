@@ -1,5 +1,5 @@
 {
-  "name": "case2_arn_dlb",
+  "name": "case2",
   "num_npus": 10,
   "workload_configuration": "../../../examples/custom_network/generated/case2/workload/custom_traffic",
   "system_configuration": "../../../examples/system/native_collectives/Ring_4chunks.json",
@@ -7,8 +7,8 @@
   "remote_memory_configuration": "../../../examples/remote_memory/analytical/no_memory_expansion.json",
   "logical_topology_configuration": "../../../examples/custom_network/generated/case2/logical_topology.json",
   "comm_group_configuration": "empty",
-  "fct_output": "scratch/output/case2_arn_dlb/fct.txt",
-  "output_directory": "scratch/output/case2_arn_dlb",
-  "annotation_command": "python3 ../../../examples/custom_network/annotate_output_files.py --output-dir scratch/output/case2_arn_dlb",
+  "fct_output": "scratch/output/case2/fct.txt",
+  "output_directory": "scratch/output/case2",
+  "annotation_command": "python3 ../../../examples/custom_network/annotate_output_files.py --output-dir scratch/output/case2",
   "traffic_manifest": "../../../examples/custom_network/generated/case2/traffic_manifest.json"
 }

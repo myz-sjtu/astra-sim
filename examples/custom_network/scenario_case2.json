@@ -1,5 +1,5 @@
 {
-  "name": "case2_arn_dlb",
+  "name": "case2",
   "num_npus": 10,
   "switches": [
     10,
@@ -144,10 +144,10 @@
   "network": {
     "default_fwd_mode": 1,
     "flow_strategy": 0,
-    "packet_strategy": 0,
+    "packet_strategy": 2,
     "arn_packet_strategy": 2,
     "arn_scale_size": 4,
-    "enable_arn": 1,
+    "enable_arn": 0,
     "arn_interval_ns": 2000,
     "arn_congestion_qlen": 300000,
     "enable_trace": 0,
