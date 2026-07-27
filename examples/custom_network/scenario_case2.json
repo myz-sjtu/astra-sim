@@ -1,5 +1,5 @@
 {
-  "name": "case2_arn_glb",
+  "name": "case2_arn_dlb",
   "num_npus": 10,
   "switches": [
     10,
