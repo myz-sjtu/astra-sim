@@ -43,10 +43,14 @@
     "_offsets": "Allreduce pair distances by phase. First offset must be num_npus / 2; each next offset must halve the previous one.",
     "bytes_per_flow": 500000000,
     "_bytes_per_flow": "Payload bytes per generated send/recv flow. Must fit MsgEvent int limit.",
+    "start_time_s": 0,
+    "_start_time": "Generated traffic start time. Use exactly one of start_time_ns, start_time_s, or legacy start_time in seconds.",
     "include_reverse": true,
-    "_include_reverse": "true adds reverse phases after the forward half-doubling phases.",
+    "_include_reverse": "true adds reverse traffic. With phase_order=forward_then_reverse, reverse phases are appended after forward phases. With phase_order=bidirectional_per_offset, each offset phase contains both directions.",
+    "phase_order": "forward_then_reverse",
+    "_phase_order": "forward_then_reverse preserves the original generated ordering. bidirectional_per_offset matches HPCC flow_long_distance.txt: one bidirectional phase per offset.",
     "phase_sync": "per_rank",
-    "_phase_sync": "per_rank chains each rank's generated communication nodes by phase."
+    "_phase_sync": "per_rank chains each rank's generated communication nodes in row order. per_phase chains only across phase boundaries so same-phase nodes can be ready together."
   },
   "_flows_alternative": [
     {

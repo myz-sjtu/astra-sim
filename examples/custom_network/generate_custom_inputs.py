@@ -441,48 +441,68 @@ def expand_half_doubling_traffic(
         "traffic.include_reverse",
     )
     phase_sync = raw_traffic.get("phase_sync", "per_rank")
-    if phase_sync != "per_rank":
-        raise ScenarioError("traffic.phase_sync must be 'per_rank'")
-
-    phase_specs = [(offset, False) for offset in offsets]
-    if include_reverse:
-        phase_specs.extend((offset, True) for offset in reversed(offsets))
+    if phase_sync not in ("per_rank", "per_phase"):
+        raise ScenarioError("traffic.phase_sync must be 'per_rank' or 'per_phase'")
+    start_time_ns = parse_start_time_ns(raw_traffic, "traffic")
+    phase_order = raw_traffic.get("phase_order", "forward_then_reverse")
+    if phase_order not in ("forward_then_reverse", "bidirectional_per_offset"):
+        raise ScenarioError(
+            "traffic.phase_order must be 'forward_then_reverse' or "
+            "'bidirectional_per_offset'"
+        )
 
     flows: list[dict[str, Any]] = []
-    for phase_number, (offset, reverse) in enumerate(phase_specs, start=1):
+    if include_reverse and phase_order == "bidirectional_per_offset":
+        phase_specs = [(offset, None) for offset in offsets]
+    else:
+        phase_specs = [(offset, False) for offset in offsets]
+        if include_reverse:
+            phase_specs.extend((offset, True) for offset in reversed(offsets))
+
+    for phase_number, (offset, reverse_mode) in enumerate(phase_specs, start=1):
         phase_flow_index = 0
         participants: set[int] = set()
-        direction = "upper_to_lower" if reverse else "lower_to_upper"
-        phase_name = f"phase_{phase_number}_{direction}_offset_{offset}"
+        if reverse_mode is None:
+            phase_name = f"phase_{phase_number}_bidirectional_offset_{offset}"
+        else:
+            direction = "upper_to_lower" if reverse_mode else "lower_to_upper"
+            phase_name = f"phase_{phase_number}_{direction}_offset_{offset}"
 
         for group_base in range(0, num_npus, 2 * offset):
             for pair_index in range(offset):
                 lower = group_base + pair_index
                 upper = lower + offset
-                src, dst = (upper, lower) if reverse else (lower, upper)
-                phase_flow_index += 1
-                tag = len(flows) + 1
-                if tag > MAX_UINT32:
-                    raise ScenarioError("generated traffic tag exceeds uint32")
-                flows.append(
-                    {
-                        "phase": phase_number,
-                        "phase_name": phase_name,
-                        "phase_flow_index": phase_flow_index,
-                        "offset": offset,
-                        "direction": direction,
-                        "src": src,
-                        "dst": dst,
-                        "bytes": bytes_per_flow,
-                        "tag": tag,
-                        "start_time_ns": 0,
-                        "fwd_mode": None,
-                    }
-                )
-                participants.add(src)
-                participants.add(dst)
 
-        if phase_flow_index != num_npus // 2 or len(participants) != num_npus:
+                reverse_values = (
+                    (False, True) if reverse_mode is None else (reverse_mode,)
+                )
+                for reverse in reverse_values:
+                    direction = "upper_to_lower" if reverse else "lower_to_upper"
+                    src, dst = (upper, lower) if reverse else (lower, upper)
+                    phase_flow_index += 1
+                    tag = len(flows) + 1
+                    if tag > MAX_UINT32:
+                        raise ScenarioError("generated traffic tag exceeds uint32")
+                    flows.append(
+                        {
+                            "phase": phase_number,
+                            "phase_name": phase_name,
+                            "phase_flow_index": phase_flow_index,
+                            "offset": offset,
+                            "direction": direction,
+                            "src": src,
+                            "dst": dst,
+                            "bytes": bytes_per_flow,
+                            "tag": tag,
+                            "start_time_ns": start_time_ns,
+                            "fwd_mode": None,
+                        }
+                    )
+                    participants.add(src)
+                    participants.add(dst)
+
+        expected_phase_flows = num_npus if reverse_mode is None else num_npus // 2
+        if phase_flow_index != expected_phase_flows or len(participants) != num_npus:
             raise ScenarioError(
                 f"generated phase {phase_number} does not cover every rank exactly once"
             )
@@ -493,6 +513,8 @@ def expand_half_doubling_traffic(
         "bytes_per_flow": bytes_per_flow,
         "include_reverse": include_reverse,
         "phase_sync": phase_sync,
+        "phase_order": phase_order,
+        "start_time_ns": start_time_ns,
     }
 
 
@@ -887,7 +909,7 @@ def make_comm_node(
     node_type: int,
     flow_index: int,
     flow: dict[str, Any],
-    parent_node_id: int | None,
+    parent_node_ids: list[int],
 ) -> ChakraNode:
     direction = "send" if node_type == COMM_SEND_NODE else "recv"
     node = ChakraNode()
@@ -897,8 +919,7 @@ def make_comm_node(
         f"{flow['src']}_to_{flow['dst']}_{flow['bytes']}B"
     )
     node.type = node_type
-    if parent_node_id is not None:
-        node.data_deps.append(parent_node_id)
+    node.data_deps.extend(parent_node_ids)
     node.attr.extend(
         [
             ChakraAttr(name="is_cpu_op", bool_val=False),
@@ -924,35 +945,73 @@ def write_workloads(scenario: dict[str, Any], workload_dir: Path) -> Path:
     }
     next_node_id = [0] * scenario["num_npus"]
     last_node_id: list[int | None] = [None] * scenario["num_npus"]
-    chain_phases = scenario["traffic"]["phase_sync"] == "per_rank"
+    phase_sync = scenario["traffic"]["phase_sync"]
+    chain_phases = phase_sync == "per_rank"
+    chain_by_phase = phase_sync == "per_phase"
+    previous_phase_nodes: dict[int, list[int]] = {
+        rank: [] for rank in range(scenario["num_npus"])
+    }
+    current_phase_nodes: dict[int, list[int]] = {
+        rank: [] for rank in range(scenario["num_npus"])
+    }
+    current_phase: int | None = None
+
+    def finish_current_phase() -> None:
+        nonlocal current_phase_nodes
+        for rank, phase_nodes in current_phase_nodes.items():
+            if phase_nodes:
+                previous_phase_nodes[rank] = phase_nodes
+        current_phase_nodes = {rank: [] for rank in range(scenario["num_npus"])}
 
     for flow_index, flow in enumerate(scenario["flows"]):
+        if chain_by_phase and flow["phase"] != current_phase:
+            if current_phase is not None:
+                finish_current_phase()
+            current_phase = flow["phase"]
+
         src = flow["src"]
         dst = flow["dst"]
+        send_parents = last_node_id[src] if chain_phases else None
+        recv_parents = last_node_id[dst] if chain_phases else None
 
         send_node = make_comm_node(
             next_node_id[src],
             COMM_SEND_NODE,
             flow_index,
             flow,
-            last_node_id[src] if chain_phases else None,
+            (
+                [send_parents]
+                if send_parents is not None
+                else previous_phase_nodes[src]
+            ),
         )
         next_node_id[src] += 1
         nodes_by_rank[src].append(send_node)
         if chain_phases:
             last_node_id[src] = send_node.id
+        if chain_by_phase:
+            current_phase_nodes[src].append(send_node.id)
 
         recv_node = make_comm_node(
             next_node_id[dst],
             COMM_RECV_NODE,
             flow_index,
             flow,
-            last_node_id[dst] if chain_phases else None,
+            (
+                [recv_parents]
+                if recv_parents is not None
+                else previous_phase_nodes[dst]
+            ),
         )
         next_node_id[dst] += 1
         nodes_by_rank[dst].append(recv_node)
         if chain_phases:
             last_node_id[dst] = recv_node.id
+        if chain_by_phase:
+            current_phase_nodes[dst].append(recv_node.id)
+
+    if chain_by_phase and current_phase is not None:
+        finish_current_phase()
 
     for rank, nodes in nodes_by_rank.items():
         if not nodes:

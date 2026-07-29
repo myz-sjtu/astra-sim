@@ -10,8 +10,10 @@
       8
     ],
     "bytes_per_flow": 500000000,
+    "start_time_s": 2,
     "include_reverse": true,
-    "phase_sync": "per_rank"
+    "phase_order": "bidirectional_per_offset",
+    "phase_sync": "per_phase"
   },
   "network": {
     "default_fwd_mode": 0,
