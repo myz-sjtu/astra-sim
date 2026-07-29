@@ -56,10 +56,10 @@
       "bytes": 10000,
       "tag": 1,
       "start_time_ns": 0,
-      "strategy": 0
+      "fwd_mode": 0
     },
     {
-      "_doc": "start_time can also be start_time_s or legacy start_time in seconds. strategy/fwd_mode is 0 flow-based, 1 packet-spray.",
+      "_doc": "start_time can also be start_time_s or legacy start_time in seconds. fwd_mode is 0 flow-based, 1 packet-spray; legacy strategy is accepted only as a deprecated alias.",
       "src": 63,
       "dst": 0,
       "bytes": 10000,
@@ -71,7 +71,7 @@
   "network": {
     "_doc": "Network block controls generated network_config.txt values.",
     "default_fwd_mode": 0,
-    "_default_fwd_mode": "Default per-flow forwarding mode. 0 flow-based, 1 packet-spray. Explicit flows can override with strategy/fwd_mode.",
+    "_default_fwd_mode": "Default per-flow forwarding mode. 0 flow-based, 1 packet-spray. Explicit flows can override with fwd_mode; legacy strategy is accepted only as a deprecated alias.",
     "flow_strategy": 1,
     "_flow_strategy": "Flow-based switch strategy. 0 ECMP, 1 PathPinning. Use 1 for HPCC-Dev long-distance path pinning.",
     "packet_strategy": 0,
@@ -82,6 +82,24 @@
     "qlen_mon_end_ns": 3000000000,
     "qlen_mon_interval_ns": 100000,
     "_qlen_monitor": "Queue length monitor timing in ns.",
+    "link_down": [
+      {
+        "time_us": 0,
+        "src": 67,
+        "dst": 69,
+        "link_idx": 8
+      }
+    ],
+    "_link_down": "Optional link failures. Each entry uses time_us/src/dst plus either link_idx or count. count expands to link_idx=1..count; generated network_config.txt uses HPCC-Dev LINK_DOWN count rows.",
+    "buffer_config": {
+      "long_dist_headroom": "20000000B",
+      "long_dist_reserve": "12500000B",
+      "short_hdrm_size": "64250B",
+      "short_reserve_size": "64250B",
+      "long_buffer_size": "457265536B",
+      "short_buffer_size": "32MB"
+    },
+    "_buffer_config": "Optional MMU settings. Values accept B/KB/MB/GB suffixes; plain numbers are bytes. Ports with delay >=100us use long-distance headroom/reserve; switches with any long-distance port use long_buffer_size.",
     "config_overrides": {
       "ENABLE_PFC": 1,
       "ENABLE_QCN": 1,

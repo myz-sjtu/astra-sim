@@ -12,6 +12,10 @@ class SwitchMmu: public Object{
 public:
 	static const uint32_t pCnt = 1025;	// Number of ports used
 	static const uint32_t qCnt = 8;	// Number of queues/priorities used
+	enum PortDistanceClass {
+		PORT_DISTANCE_SHORT = 0,
+		PORT_DISTANCE_LONG = 1
+	};
 
 	static TypeId GetTypeId (void);
 
@@ -31,30 +35,39 @@ public:
 	//void GetPauseClasses(uint32_t port, uint32_t qIndex);
 	//bool GetResumeClasses(uint32_t port, uint32_t qIndex);
 
-	uint32_t GetPfcThreshold(uint32_t port);
-	uint32_t GetSharedUsed(uint32_t port, uint32_t qIndex);
+	uint64_t GetPfcThreshold(uint32_t port);
+	uint64_t GetSharedUsed(uint32_t port, uint32_t qIndex);
 
 	bool ShouldSendCN(uint32_t ifindex, uint32_t qIndex);
 
 	void ConfigEcn(uint32_t port, uint32_t _kmin, uint32_t _kmax, double _pmax);
-	void ConfigHdrm(uint32_t port, uint32_t size);
+	void ConfigHdrm(uint32_t port, uint64_t size);
+	void ConfigRsrv(uint32_t port, uint64_t size);
+	void ConfigPortDistance(uint32_t port, bool is_long_distance);
+	bool IsLongDistancePort(uint32_t port) const;
+	bool IsShortDistancePort(uint32_t port) const;
+	bool HasLongDistancePort(uint32_t n_port) const;
+	void ConfigDelayPort(uint32_t port);
+	bool IsDelayPort(uint32_t port) const;
 	void ConfigNPort(uint32_t n_port);
-	void ConfigBufferSize(uint32_t size);
+	void ConfigBufferSize(uint64_t size);
 
 	// config
 	uint32_t node_id;
-	uint32_t buffer_size;
+	uint64_t buffer_size;
 	uint32_t pfc_a_shift[pCnt];
-	uint32_t reserve;
-	uint32_t headroom[pCnt];
+	uint64_t reserve[pCnt];
+	uint64_t headroom[pCnt];
+	PortDistanceClass port_distance[pCnt];
+	bool delay_port[pCnt];
 	uint32_t resume_offset;
 	uint32_t kmin[pCnt], kmax[pCnt];
 	double pmax[pCnt];
-	uint32_t total_hdrm;
-	uint32_t total_rsrv;
+	uint64_t total_hdrm;
+	uint64_t total_rsrv;
 
 	// runtime
-	uint32_t shared_used_bytes;
+	uint64_t shared_used_bytes;
 	uint32_t hdrm_bytes[pCnt][qCnt];
 	uint32_t ingress_bytes[pCnt][qCnt];
 	uint32_t paused[pCnt][qCnt];
@@ -64,4 +77,3 @@ public:
 } /* namespace ns3 */
 
 #endif /* SWITCH_MMU_H */
-

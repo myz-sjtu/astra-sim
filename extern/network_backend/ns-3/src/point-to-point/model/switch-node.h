@@ -1,7 +1,6 @@
 #ifndef SWITCH_NODE_H
 #define SWITCH_NODE_H
 
-#include <set>
 #include <unordered_map>
 #include <ns3/custom-header.h>
 #include <ns3/node.h>
@@ -67,11 +66,6 @@ public:
 	void ClearTable();
 	bool SwitchReceiveFromDevice(Ptr<NetDevice> device, Ptr<Packet> packet, CustomHeader &ch);
 	void SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Packet> p);
-
-	// Path pinning state. common.h fills these after shortest-path routes exist.
-	std::set<int> sideDevs_1;
-	std::set<int> sideDevs_2;
-	std::unordered_map<int, int> pinMappings;
 
 	// for approximate calc in PINT
 	int logres_shift(int b, int l);

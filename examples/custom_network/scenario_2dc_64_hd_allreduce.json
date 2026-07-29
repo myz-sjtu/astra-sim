@@ -1,0 +1,62 @@
+{
+  "name": "2dc_64_hd_allreduce",
+  "num_npus": 64,
+  "topology_file": "examples/custom_network/topology/clos_2dc_64_long_topo_mul.txt",
+  "traffic": {
+    "pattern": "half_doubling_allreduce",
+    "offsets": [
+      32,
+      16,
+      8
+    ],
+    "bytes_per_flow": 500000000,
+    "include_reverse": true,
+    "phase_sync": "per_rank"
+  },
+  "network": {
+    "default_fwd_mode": 0,
+    "flow_strategy": 1,
+    "enable_trace": 0,
+    "qlen_mon_start_ns": 2000000000,
+    "qlen_mon_end_ns": 3000000000,
+    "qlen_mon_interval_ns": 100000,
+    "link_down": [
+      {
+        "time_us": 0,
+        "src": 67,
+        "dst": 69,
+        "link_idx": 8
+      }
+    ],
+    "buffer_config": {
+      "long_dist_headroom": "20000000B",
+      "long_dist_reserve": "12500000B",
+      "short_hdrm_size": "64250B",
+      "short_reserve_size": "64250B",
+      "long_buffer_size": "457265536B",
+      "short_buffer_size": "32MB"
+    },
+    "config_overrides": {
+      "ENABLE_PFC": 1,
+      "ENABLE_QCN": 0,
+      "USE_DYNAMIC_PFC_THRESHOLD": 1,
+      "CC_MODE": 1,
+      "ACK_HIGH_PRIO": 0,
+      "GLOBAL_T": 1
+    },
+    "ecn_thresholds": [
+      {
+        "bandwidth": "200Gbps",
+        "kmin": 600,
+        "kmax": 2400,
+        "pmax": 0.2
+      },
+      {
+        "bandwidth": "400Gbps",
+        "kmin": 800,
+        "kmax": 3200,
+        "pmax": 0.2
+      }
+    ]
+  }
+}

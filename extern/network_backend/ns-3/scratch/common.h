@@ -26,10 +26,14 @@
 #include "ns3/packet.h"
 #include "ns3/point-to-point-helper.h"
 #include "ns3/qbb-helper.h"
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
-#include <set>
+#include <map>
 #include <sstream>
+#include <stdexcept>
 #include <ns3/rdma-client-helper.h>
 #include <ns3/rdma-client.h>
 #include <ns3/rdma-driver.h>
@@ -76,15 +80,32 @@ int nic_total_pause_time =
     0; // slightly less than finish time without inefficiency in us
 
 uint32_t ack_high_prio = 0;
-uint32_t flow_strategy = 0;  // Flow-based forwarding strategy: 0=ECMP
+uint32_t flow_strategy = 0;  // Flow-based forwarding strategy: 0=ECMP, 1=PathPinning
 uint32_t packet_strategy = 0; // Packet-based forwarding strategy: 0=RR
 uint8_t default_fwd_mode = 0; // Default forwarding mode for all flows: 0=flow-based, 1=packet spray
-uint64_t link_down_time = 0;
-uint32_t link_down_A = 0, link_down_B = 0;
+
+struct LinkDownInfo {
+  uint32_t link_down_A;
+  uint32_t link_down_B;
+  uint32_t link_down_idx;
+};
+map<uint64_t, vector<LinkDownInfo>> link_down_map;
 
 uint32_t enable_trace = 1;
 
-uint32_t buffer_size = 16;
+uint64_t buffer_size_bytes = 16ull * 1024 * 1024;
+uint64_t long_dist_headroom = 0;
+uint64_t long_dist_reserve = 0;
+uint64_t short_hdrm_size = 0;
+uint64_t short_reserve_size = 0;
+uint64_t long_buffer_size = 0;
+uint64_t short_buffer_size = 0;
+bool has_long_dist_headroom = false;
+bool has_long_dist_reserve = false;
+bool has_short_hdrm_size = false;
+bool has_short_reserve_size = false;
+bool has_long_buffer_size = false;
+bool has_short_buffer_size = false;
 
 uint32_t qlen_dump_interval = 1000, qlen_mon_interval = 100;
 uint64_t qlen_mon_start = 0, qlen_mon_end = 2100000000;
@@ -93,6 +114,62 @@ string qlen_mon_file;
 
 unordered_map<uint64_t, uint32_t> rate2kmax, rate2kmin;
 unordered_map<uint64_t, double> rate2pmax;
+
+std::string Trim(const std::string &value) {
+  size_t begin = value.find_first_not_of(" \t\r\n");
+  if (begin == std::string::npos)
+    return "";
+  size_t end = value.find_last_not_of(" \t\r\n");
+  return value.substr(begin, end - begin + 1);
+}
+
+std::string ToLower(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+    return std::tolower(c);
+  });
+  return value;
+}
+
+bool HasByteUnitSuffix(const std::string &value) {
+  for (char c : value) {
+    if (std::isalpha(static_cast<unsigned char>(c)))
+      return true;
+  }
+  return false;
+}
+
+uint64_t ParseByteSize(const std::string &raw_value, const std::string &key) {
+  std::string value = Trim(raw_value);
+  NS_ASSERT_MSG(!value.empty(), key << " must not be empty");
+
+  std::string lower = ToLower(value);
+  uint64_t multiplier = 1;
+  std::string number = value;
+  if (lower.size() >= 2 && lower.substr(lower.size() - 2) == "kb") {
+    multiplier = 1024ull;
+    number = value.substr(0, value.size() - 2);
+  } else if (lower.size() >= 2 && lower.substr(lower.size() - 2) == "mb") {
+    multiplier = 1024ull * 1024;
+    number = value.substr(0, value.size() - 2);
+  } else if (lower.size() >= 2 && lower.substr(lower.size() - 2) == "gb") {
+    multiplier = 1024ull * 1024 * 1024;
+    number = value.substr(0, value.size() - 2);
+  } else if (lower.size() >= 1 && lower.substr(lower.size() - 1) == "b") {
+    number = value.substr(0, value.size() - 1);
+  }
+
+  char *end = nullptr;
+  double amount = std::strtod(number.c_str(), &end);
+  NS_ASSERT_MSG(end != number.c_str() && *end == '\0' && amount >= 0,
+                key << " has invalid byte-size value: " << raw_value);
+  return static_cast<uint64_t>(amount * multiplier + 0.5);
+}
+
+uint64_t ParseLegacyBufferSize(const std::string &value) {
+  if (HasByteUnitSuffix(value))
+    return ParseByteSize(value, "BUFFER_SIZE");
+  return ParseByteSize(value, "BUFFER_SIZE") * 1024ull * 1024;
+}
 
 /************************************************
  * Runtime varibles
@@ -106,9 +183,6 @@ uint64_t nic_rate;
 uint64_t maxRtt, maxBdp;
 
 std::vector<Ipv4Address> serverAddress;
-std::vector<uint32_t> switchIds;
-std::set<uint32_t> leafSwitchIds;
-std::set<uint32_t> spineSwitchIds;
 
 // maintain port number for each host pair
 std::unordered_map<uint32_t, unordered_map<uint32_t, uint16_t>> portNumber;
@@ -353,131 +427,78 @@ void SetRoutingEntries() {
   }
 }
 
-void PinningRoute(const NodeContainer &n) {
-  if (leafSwitchIds.empty() || spineSwitchIds.empty()) {
-    NS_ASSERT_MSG(false, "Path pinning requires leaf/spine topology metadata");
-  }
-
-  for (uint32_t switch_id : switchIds) {
-    Ptr<Node> node = n.Get(switch_id);
-    Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(node);
-    sw->sideDevs_1.clear();
-    sw->sideDevs_2.clear();
-    sw->pinMappings.clear();
-
-    if (leafSwitchIds.find(switch_id) != leafSwitchIds.end()) {
-      for (uint32_t spine_id : spineSwitchIds) {
-        Ptr<Node> spine = n.Get(spine_id);
-        auto neighbor = nbr2if[node].find(spine);
-        if (neighbor == nbr2if[node].end())
-          continue;
-        for (const auto &interface : neighbor->second) {
-          if (interface.up)
-            sw->sideDevs_2.insert(interface.idx);
-        }
-      }
-
-      for (uint32_t dev_idx = 1; dev_idx < sw->GetNDevices(); dev_idx++) {
-        if (sw->sideDevs_2.find(dev_idx) == sw->sideDevs_2.end() &&
-            sw->GetDevice(dev_idx)->IsLinkUp()) {
-          sw->sideDevs_1.insert(dev_idx);
-        }
-      }
-
-      NS_ASSERT_MSG(!sw->sideDevs_2.empty(),
-                    "Path pinning leaf switch has no spine-facing ports");
-      auto side2 = sw->sideDevs_2.begin();
-      for (int intf_id : sw->sideDevs_1) {
-        sw->pinMappings[intf_id] = *side2;
-        side2++;
-        if (side2 == sw->sideDevs_2.end())
-          side2 = sw->sideDevs_2.begin();
-      }
-    } else {
-      for (uint32_t leaf_id : leafSwitchIds) {
-        Ptr<Node> leaf = n.Get(leaf_id);
-        auto neighbor = nbr2if[node].find(leaf);
-        if (neighbor == nbr2if[node].end())
-          continue;
-        for (const auto &interface : neighbor->second) {
-          if (interface.up)
-            sw->sideDevs_1.insert(interface.idx);
-        }
-      }
-
-      for (uint32_t spine_id : spineSwitchIds) {
-        if (spine_id == switch_id)
-          continue;
-        Ptr<Node> spine = n.Get(spine_id);
-        auto neighbor = nbr2if[node].find(spine);
-        if (neighbor == nbr2if[node].end())
-          continue;
-        for (const auto &interface : neighbor->second) {
-          if (interface.up)
-            sw->sideDevs_2.insert(interface.idx);
-        }
-      }
-
-      NS_ASSERT_MSG(!sw->sideDevs_1.empty() && !sw->sideDevs_2.empty(),
-                    "Path pinning spine switch requires ports on both sides");
-      if (sw->sideDevs_1.size() > sw->sideDevs_2.size()) {
-        auto side2 = sw->sideDevs_2.begin();
-        for (int intf_id : sw->sideDevs_1) {
-          if (sw->pinMappings.find(intf_id) == sw->pinMappings.end())
-            sw->pinMappings[intf_id] = *side2;
-          if (sw->pinMappings.find(*side2) == sw->pinMappings.end())
-            sw->pinMappings[*side2] = intf_id;
-          side2++;
-          if (side2 == sw->sideDevs_2.end())
-            side2 = sw->sideDevs_2.begin();
-        }
-      } else {
-        auto side1 = sw->sideDevs_1.begin();
-        for (int intf_id : sw->sideDevs_2) {
-          if (sw->pinMappings.find(intf_id) == sw->pinMappings.end())
-            sw->pinMappings[intf_id] = *side1;
-          if (sw->pinMappings.find(*side1) == sw->pinMappings.end())
-            sw->pinMappings[*side1] = intf_id;
-          side1++;
-          if (side1 == sw->sideDevs_1.end())
-            side1 = sw->sideDevs_1.begin();
-        }
-      }
-    }
-  }
-}
-
-// take down the link between a and b, and redo the routing
-void TakeDownLink(NodeContainer n, Ptr<Node> a, Ptr<Node> b) {
-  if (!HasUpInterface(nbr2if[a][b]))
-    return;
-  // take down link between a and b
-  for (auto &interface : nbr2if[a][b])
-    interface.up = false;
-  for (auto &interface : nbr2if[b][a])
-    interface.up = false;
+void RebuildRoutesAfterLinkDown(NodeContainer n) {
   nextHop.clear();
   CalculateRoutes(n);
-  // clear routing tables
   for (uint32_t i = 0; i < n.GetN(); i++) {
     if (n.Get(i)->GetNodeType() == 1)
       DynamicCast<SwitchNode>(n.Get(i))->ClearTable();
     else
       n.Get(i)->GetObject<RdmaDriver>()->m_rdma->ClearTable();
   }
-  for (const auto &interface : nbr2if[a][b])
-    DynamicCast<QbbNetDevice>(a->GetDevice(interface.idx))->TakeDown();
-  for (const auto &interface : nbr2if[b][a])
-    DynamicCast<QbbNetDevice>(b->GetDevice(interface.idx))->TakeDown();
-  // reset routing table
   SetRoutingEntries();
-  if (flow_strategy == SwitchNode::FLOW_STRATEGY_PATH_PINNING)
-    PinningRoute(n);
-
-  // redistribute qp on each host
   for (uint32_t i = 0; i < n.GetN(); i++) {
     if (n.Get(i)->GetNodeType() == 0)
       n.Get(i)->GetObject<RdmaDriver>()->m_rdma->RedistributeQp();
+  }
+}
+
+// take down one indexed physical link between a and b, and optionally reroute
+void TakeDownLink(NodeContainer n, Ptr<Node> a, Ptr<Node> b, uint32_t link_idx,
+                  bool reroute) {
+  auto &forward = nbr2if[a][b];
+  auto &reverse = nbr2if[b][a];
+  if (link_idx == 0) {
+    NS_ASSERT_MSG(forward.size() == reverse.size(),
+                  "LINK_DOWN node pair has asymmetric parallel links");
+    for (uint32_t i = 0; i < forward.size(); i++) {
+      if (forward[i].up || reverse[i].up) {
+        forward[i].up = false;
+        reverse[i].up = false;
+        DynamicCast<QbbNetDevice>(a->GetDevice(forward[i].idx))->TakeDown();
+        DynamicCast<QbbNetDevice>(b->GetDevice(reverse[i].idx))->TakeDown();
+      }
+    }
+    if (reroute)
+      RebuildRoutesAfterLinkDown(n);
+    return;
+  }
+
+  NS_ASSERT_MSG(link_idx >= 1 && link_idx <= forward.size() &&
+                    link_idx <= reverse.size(),
+                "LINK_DOWN link_idx is out of range for node pair ("
+                    << a->GetId() << "," << b->GetId() << "): " << link_idx);
+
+  Interface &forward_interface = forward[link_idx - 1];
+  Interface &reverse_interface = reverse[link_idx - 1];
+  if (forward_interface.up || reverse_interface.up) {
+    forward_interface.up = false;
+    reverse_interface.up = false;
+    DynamicCast<QbbNetDevice>(a->GetDevice(forward_interface.idx))->TakeDown();
+    DynamicCast<QbbNetDevice>(b->GetDevice(reverse_interface.idx))->TakeDown();
+  }
+
+  if (reroute)
+    RebuildRoutesAfterLinkDown(n);
+}
+
+void ScheduleTakeDownLinks(NodeContainer n) {
+  for (const auto &event : link_down_map) {
+    uint64_t link_down_time = event.first;
+    const vector<LinkDownInfo> &links = event.second;
+    for (uint32_t i = 0; i < links.size(); i++) {
+      const LinkDownInfo &info = links[i];
+      Ptr<Node> a = n.Get(info.link_down_A);
+      Ptr<Node> b = n.Get(info.link_down_B);
+      NS_ASSERT_MSG(info.link_down_idx == 0 ||
+                        nbr2if[a][b].size() >= info.link_down_idx,
+                    "LINK_DOWN link_idx is out of range for node pair ("
+                        << info.link_down_A << "," << info.link_down_B
+                        << "): " << info.link_down_idx);
+      Simulator::Schedule(Seconds(2) + MicroSeconds(link_down_time),
+                          &TakeDownLink, n, a, b, info.link_down_idx,
+                          i + 1 == links.size());
+    }
   }
 }
 
@@ -489,6 +510,67 @@ uint64_t get_nic_rate(NodeContainer &n) {
           .GetBitRate();
   // TODO: Complain if you cannot find the NIC rate.
   return 0;
+}
+
+uint64_t ParseUint64Token(const std::string &token, const std::string &field) {
+  NS_ASSERT_MSG(!token.empty() && token[0] != '-',
+                field << " must be a non-negative integer");
+  char *end = nullptr;
+  unsigned long long value = std::strtoull(token.c_str(), &end, 10);
+  NS_ASSERT_MSG(end != token.c_str() && *end == '\0',
+                field << " must be a non-negative integer: " << token);
+  return value;
+}
+
+vector<std::string> TokenizeLine(const std::string &line) {
+  vector<std::string> tokens;
+  std::istringstream iss(line);
+  std::string token;
+  while (iss >> token)
+    tokens.push_back(token);
+  return tokens;
+}
+
+void ReadLinkDownConfig(std::ifstream &conf) {
+  std::string rest;
+  std::getline(conf, rest);
+  vector<std::string> tokens = TokenizeLine(rest);
+
+  if (tokens.size() == 3) {
+    uint64_t time_us = ParseUint64Token(tokens[0], "LINK_DOWN time_us");
+    if (time_us > 0) {
+      link_down_map[time_us].push_back(
+          {static_cast<uint32_t>(ParseUint64Token(tokens[1], "LINK_DOWN src")),
+           static_cast<uint32_t>(ParseUint64Token(tokens[2], "LINK_DOWN dst")),
+           0});
+    }
+    return;
+  }
+
+  if (tokens.size() == 4) {
+    uint64_t time_us = ParseUint64Token(tokens[0], "LINK_DOWN time_us");
+    link_down_map[time_us].push_back(
+        {static_cast<uint32_t>(ParseUint64Token(tokens[1], "LINK_DOWN src")),
+         static_cast<uint32_t>(ParseUint64Token(tokens[2], "LINK_DOWN dst")),
+         static_cast<uint32_t>(ParseUint64Token(tokens[3], "LINK_DOWN link_idx"))});
+    return;
+  }
+
+  uint64_t count = 0;
+  if (tokens.empty()) {
+    conf >> count;
+  } else {
+    NS_ASSERT_MSG(tokens.size() == 1,
+                  "LINK_DOWN must be 0, count, time/src/dst, or time/src/dst/link_idx");
+    count = ParseUint64Token(tokens[0], "LINK_DOWN count");
+  }
+
+  for (uint64_t i = 0; i < count; i++) {
+    uint64_t time_us = 0;
+    uint32_t src = 0, dst = 0, link_idx = 0;
+    conf >> time_us >> src >> dst >> link_idx;
+    link_down_map[time_us].push_back({src, dst, link_idx});
+  }
 }
 
 bool ReadConf(string network_configuration) {
@@ -649,7 +731,7 @@ bool ReadConf(string network_configuration) {
     } else if (key.compare("PFC_OUTPUT_FILE") == 0) {
       conf >> pfc_output_file;
     } else if (key.compare("LINK_DOWN") == 0) {
-      conf >> link_down_time >> link_down_A >> link_down_B;
+      ReadLinkDownConfig(conf);
     } else if (key.compare("ENABLE_TRACE") == 0) {
       conf >> enable_trace;
     } else if (key.compare("KMAX_MAP") == 0) {
@@ -680,7 +762,39 @@ bool ReadConf(string network_configuration) {
         rate2pmax[rate] = p;
       }
     } else if (key.compare("BUFFER_SIZE") == 0) {
-      conf >> buffer_size;
+      std::string v;
+      conf >> v;
+      buffer_size_bytes = ParseLegacyBufferSize(v);
+    } else if (key.compare("LONG_DIST_HEADROOM") == 0) {
+      std::string v;
+      conf >> v;
+      long_dist_headroom = ParseByteSize(v, key);
+      has_long_dist_headroom = true;
+    } else if (key.compare("LONG_DIST_RESERVE") == 0) {
+      std::string v;
+      conf >> v;
+      long_dist_reserve = ParseByteSize(v, key);
+      has_long_dist_reserve = true;
+    } else if (key.compare("SHORT_HDRM_SIZE") == 0) {
+      std::string v;
+      conf >> v;
+      short_hdrm_size = ParseByteSize(v, key);
+      has_short_hdrm_size = true;
+    } else if (key.compare("SHORT_RESERVE_SIZE") == 0) {
+      std::string v;
+      conf >> v;
+      short_reserve_size = ParseByteSize(v, key);
+      has_short_reserve_size = true;
+    } else if (key.compare("LONG_BUFFER_SIZE") == 0) {
+      std::string v;
+      conf >> v;
+      long_buffer_size = ParseByteSize(v, key);
+      has_long_buffer_size = true;
+    } else if (key.compare("SHORT_BUFFER_SIZE") == 0) {
+      std::string v;
+      conf >> v;
+      short_buffer_size = ParseByteSize(v, key);
+      has_short_buffer_size = true;
     } else if (key.compare("QLEN_MON_FILE") == 0) {
       conf >> qlen_mon_file;
     } else if (key.compare("QLEN_MON_START") == 0) {
@@ -790,23 +904,20 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
               << std::endl;
     return false;
   }
-  switchIds.clear();
-  leafSwitchIds.clear();
-  spineSwitchIds.clear();
   flowf >> flow_num;
   tracef >> trace_num;
 
   configured_flow_start_ns.clear();
   configured_flow_fwd_mode.clear();
   for (uint32_t i = 0; i < flow_num; i++) {
-    uint32_t src, dst, pg, dport, strategy;
+    uint32_t src, dst, pg, dport, fwd_mode;
     uint64_t size;
     double start_time_seconds;
-    flowf >> src >> dst >> pg >> dport >> size >> start_time_seconds >> strategy;
+    flowf >> src >> dst >> pg >> dport >> size >> start_time_seconds >> fwd_mode;
     auto key = make_tuple(src, dst, i + 1);
     configured_flow_start_ns[key] =
         static_cast<uint64_t>(start_time_seconds * 1000000000.0 + 0.5);
-    configured_flow_fwd_mode[key] = static_cast<uint8_t>(strategy);
+    configured_flow_fwd_mode[key] = static_cast<uint8_t>(fwd_mode);
   }
 
   std::vector<uint32_t> node_type(node_num, 0);
@@ -815,22 +926,17 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
       uint32_t sid;
       topof >> sid;
       node_type[sid] = 1;
-      leafSwitchIds.insert(sid);
-      switchIds.push_back(sid);
     }
     for (uint32_t i = 0; i < spine_num; i++) {
       uint32_t sid;
       topof >> sid;
       node_type[sid] = 1;
-      spineSwitchIds.insert(sid);
-      switchIds.push_back(sid);
     }
   } else {
     for (uint32_t i = 0; i < switch_num; i++) {
       uint32_t sid;
       topof >> sid;
       node_type[sid] = 1;
-      switchIds.push_back(sid);
     }
   }
   for (uint32_t i = 0; i < node_num; i++) {
@@ -871,17 +977,12 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
 
   QbbHelper qbb;
   Ipv4AddressHelper ipv4;
-  std::set<uint32_t> hostAdjacentSwitches;
   for (uint32_t i = 0; i < link_num; i++) {
     uint32_t src, dst;
     std::string data_rate, link_delay;
     double error_rate;
     topof >> src >> dst >> data_rate >> link_delay >> error_rate;
     Ptr<Node> snode = n.Get(src), dnode = n.Get(dst);
-    bool src_is_switch = node_type[src] == 1;
-    bool dst_is_switch = node_type[dst] == 1;
-    if (src_is_switch != dst_is_switch)
-      hostAdjacentSwitches.insert(src_is_switch ? src : dst);
 
     qbb.SetDeviceAttribute("DataRate", StringValue(data_rate));
     qbb.SetChannelAttribute("Delay", StringValue(link_delay));
@@ -948,51 +1049,77 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
                                     DynamicCast<QbbNetDevice>(d.Get(1))));
   }
 
-  if (topology_header_values.size() == 3) {
-    for (uint32_t switch_id : switchIds) {
-      if (hostAdjacentSwitches.find(switch_id) != hostAdjacentSwitches.end())
-        leafSwitchIds.insert(switch_id);
-      else
-        spineSwitchIds.insert(switch_id);
-    }
-  }
-
   nic_rate = get_nic_rate(n);
   // config switch
   for (uint32_t i = 0; i < node_num; i++) {
     if (n.Get(i)->GetNodeType() == 1) { // is switch
       Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(n.Get(i));
       uint32_t shift = 3; // by default 1/8
+      bool has_long_distance_port = false;
+      bool explicit_port_buffer_config =
+          has_long_dist_headroom || has_long_dist_reserve ||
+          has_short_hdrm_size || has_short_reserve_size;
+      bool explicit_switch_buffer_config =
+          has_long_buffer_size || has_short_buffer_size;
 
       for (uint32_t j = 1; j < sw->GetNDevices(); j++) {
         Ptr<QbbNetDevice> dev = DynamicCast<QbbNetDevice>(sw->GetDevice(j));
         // set ecn
-        uint64_t rate = dev->GetDataRate().GetBitRate();
-        NS_ASSERT_MSG(rate2kmin.find(rate) != rate2kmin.end(),
+        uint64_t port_rate = dev->GetDataRate().GetBitRate();
+        NS_ASSERT_MSG(rate2kmin.find(port_rate) != rate2kmin.end(),
                       "must set kmin for each link speed");
-        NS_ASSERT_MSG(rate2kmax.find(rate) != rate2kmax.end(),
+        NS_ASSERT_MSG(rate2kmax.find(port_rate) != rate2kmax.end(),
                       "must set kmax for each link speed");
-        NS_ASSERT_MSG(rate2pmax.find(rate) != rate2pmax.end(),
+        NS_ASSERT_MSG(rate2pmax.find(port_rate) != rate2pmax.end(),
                       "must set pmax for each link speed");
-        sw->m_mmu->ConfigEcn(j, rate2kmin[rate], rate2kmax[rate],
-                             rate2pmax[rate]);
+        sw->m_mmu->ConfigEcn(j, rate2kmin[port_rate], rate2kmax[port_rate],
+                             rate2pmax[port_rate]);
         // set pfc
         uint64_t delay = DynamicCast<QbbChannel>(dev->GetChannel())
                              ->GetDelay()
                              .GetTimeStep();
-        // uint32_t headroom = 150000; // rate * delay / 8 / 1000000000 * 3;
-        uint32_t headroom = rate * delay / 8 / 1000000000 * headroom_factor;
+        uint64_t computed_headroom =
+            port_rate * delay / 8 / 1000000000 * headroom_factor;
+        uint64_t headroom = computed_headroom;
+        uint64_t reserve = sw->m_mmu->reserve[j];
+        uint64_t long_distance_delay_threshold =
+            static_cast<uint64_t>(MicroSeconds(100).GetTimeStep());
+        bool is_long_distance_port = delay >= long_distance_delay_threshold;
+        sw->m_mmu->ConfigPortDistance(j, is_long_distance_port);
+        // HPCC-Dev applies delay-port admission/PFC behavior to all switch ports.
+        sw->m_mmu->ConfigDelayPort(j);
+        has_long_distance_port =
+            has_long_distance_port || sw->m_mmu->IsLongDistancePort(j);
+        if (explicit_port_buffer_config) {
+          if (sw->m_mmu->IsLongDistancePort(j)) {
+            headroom =
+                has_long_dist_headroom ? long_dist_headroom : computed_headroom;
+            reserve = has_long_dist_reserve ? long_dist_reserve : headroom;
+          } else {
+            headroom = has_short_hdrm_size ? short_hdrm_size : computed_headroom;
+            reserve = has_short_reserve_size ? short_reserve_size : headroom;
+          }
+        }
         sw->m_mmu->ConfigHdrm(j, headroom);
+        sw->m_mmu->ConfigRsrv(j, reserve);
 
         // set pfc alpha, proportional to link bw
         sw->m_mmu->pfc_a_shift[j] = shift;
+        uint64_t rate = port_rate;
         while (rate > nic_rate && sw->m_mmu->pfc_a_shift[j] > 0) {
           sw->m_mmu->pfc_a_shift[j]--;
           rate /= 2;
         }
       }
       sw->m_mmu->ConfigNPort(sw->GetNDevices() - 1);
-      sw->m_mmu->ConfigBufferSize(buffer_size * 1024 * 1024);
+      uint64_t selected_buffer_size = buffer_size_bytes;
+      if (explicit_switch_buffer_config) {
+        if (has_long_distance_port && has_long_buffer_size)
+          selected_buffer_size = long_buffer_size;
+        else if (!has_long_distance_port && has_short_buffer_size)
+          selected_buffer_size = short_buffer_size;
+      }
+      sw->m_mmu->ConfigBufferSize(selected_buffer_size);
       sw->m_mmu->node_id = sw->GetId();
     }
   }
@@ -1137,8 +1264,6 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
   }
 
   Ipv4GlobalRoutingHelper::PopulateRoutingTables();
-  if (flow_strategy == SwitchNode::FLOW_STRATEGY_PATH_PINNING)
-    PinningRoute(n);
 
   NS_LOG_INFO("Create Applications.");
 
@@ -1157,11 +1282,7 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
   tracef.close();
 
   // schedule link down
-  if (link_down_time > 0) {
-    Simulator::Schedule(Seconds(2) + MicroSeconds(link_down_time),
-                        &TakeDownLink, n, n.Get(link_down_A),
-                        n.Get(link_down_B));
-  }
+  ScheduleTakeDownLinks(n);
 
   // schedule buffer monitor
   FILE *qlen_output = fopen(qlen_mon_file.c_str(), "w");

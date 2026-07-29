@@ -11,7 +11,6 @@
 #include "ppp-header.h"
 #include "ns3/simulator.h"
 #include "ns3/int-header.h"
-#include <algorithm>
 #include <cmath>
 
 namespace ns3 {
@@ -138,24 +137,26 @@ int SwitchNode::GetOutDevPathPinning(Ptr<const Packet> p, CustomHeader &ch){
 		return -1;
 
 	auto &nexthops = entry->second;
-	if (nexthops.size() == 0)
+	int n = nexthops.size();
+	if (n == 0)
 		return -1;
 
-	if (nexthops.size() == 1)
+	if (n == 1)
 		return nexthops[0];
 
-	int inDev = GetInDev(p);
-	auto pinned = pinMappings.find(inDev);
-	if (pinned != pinMappings.end() &&
-	    std::find(nexthops.begin(), nexthops.end(), pinned->second) != nexthops.end()) {
-		return pinned->second;
+	static const int kPathPinningModuloMinWindow = 8;
+	int moduloWindow = n > kPathPinningModuloMinWindow ? n : kPathPinningModuloMinWindow;
+	int idx = (GetInDev(p) - 1) % moduloWindow;
+	if (idx < 0)
+		idx += moduloWindow;
+
+	for (int i = 0; i < moduloWindow; i++) {
+		if (idx < n && this->GetDevice(nexthops[idx])->IsLinkUp())
+			return nexthops[idx];
+		idx = (idx + 1) % moduloWindow;
 	}
 
-	// HPCC path-pinning is ingress-port based. For multi-DC topologies with
-	// multiple leaf groups per side, an ingress pin can point to a port that is
-	// not on a shortest path for the packet's destination. In that case keep
-	// forwarding destination-correct by selecting a stable candidate next hop.
-	return nexthops[inDev % nexthops.size()];
+	return -1;
 }
 
 int SwitchNode::GetOutDevPktSprayRR(Ptr<const Packet> p, CustomHeader &ch){
@@ -275,9 +276,6 @@ void SwitchNode::AddTableEntry(Ipv4Address &dstAddr, uint32_t intf_idx){
 
 void SwitchNode::ClearTable(){
 	m_rtTable.clear();
-	sideDevs_1.clear();
-	sideDevs_2.clear();
-	pinMappings.clear();
 }
 
 // This function can only be called in switch mode

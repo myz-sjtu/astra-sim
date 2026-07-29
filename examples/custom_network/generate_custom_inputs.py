@@ -42,8 +42,19 @@ RATE_UNITS = {
     "Gbps": 1_000_000_000,
     "Tbps": 1_000_000_000_000,
 }
+BYTE_UNITS = {
+    "": 1,
+    "B": 1,
+    "KB": 1024,
+    "MB": 1024 * 1024,
+    "GB": 1024 * 1024 * 1024,
+}
 NS_PER_SECOND = 1_000_000_000
 NS_PER_MICROSECOND = 1_000
+FWD_MODE_DESCRIPTION = (
+    "0=flow-based (uses FLOW_STRATEGY: 0=ECMP, 1=path-pinning), "
+    "1=packet-spray"
+)
 
 
 class ScenarioError(ValueError):
@@ -133,6 +144,22 @@ def parse_data_rate(value: str, field: str) -> int:
     if not bps.is_integer() or bps <= 0:
         raise ScenarioError(f"{field} must resolve to a positive integer bps value")
     return int(bps)
+
+
+def parse_byte_size(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ScenarioError(f"{field} must be a byte size string or number")
+    rendered = str(value).strip()
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)([KMG]?B)?", rendered, re.IGNORECASE)
+    if not match:
+        raise ScenarioError(f"{field} has unsupported byte size: {value}")
+    number, unit = match.group(1), (match.group(2) or "").upper()
+    if unit == "" and "." in number:
+        raise ScenarioError(f"{field} without a unit must be an integer byte count")
+    bytes_value = float(number) * BYTE_UNITS[unit]
+    if bytes_value < 0:
+        raise ScenarioError(f"{field} must be non-negative")
+    return int(round(bytes_value))
 
 
 def parse_physical_topology_file(
@@ -311,11 +338,21 @@ def normalize_explicit_flows(
         size = require_int(raw_flow.get("bytes"), f"flows[{index}].bytes", 1)
         tag = require_int(raw_flow.get("tag", index + 1), f"flows[{index}].tag")
         start_time_ns = parse_start_time_ns(raw_flow, f"flows[{index}]")
-        fwd_mode = raw_flow.get("strategy", raw_flow.get("fwd_mode"))
+        # Deprecated alias kept for older scenario files; new inputs should use fwd_mode.
+        has_fwd_mode = "fwd_mode" in raw_flow
+        has_legacy_strategy = "strategy" in raw_flow
+        if has_fwd_mode and has_legacy_strategy and raw_flow["fwd_mode"] != raw_flow["strategy"]:
+            raise ScenarioError(
+                f"flows[{index}] defines conflicting fwd_mode and legacy strategy"
+            )
+        fwd_mode_field = "fwd_mode" if has_fwd_mode else "strategy"
+        fwd_mode = raw_flow.get(fwd_mode_field)
         if fwd_mode is not None:
-            fwd_mode = require_int(fwd_mode, f"flows[{index}].strategy")
+            fwd_mode = require_int(fwd_mode, f"flows[{index}].{fwd_mode_field}")
             if fwd_mode not in (0, 1):
-                raise ScenarioError(f"flows[{index}].strategy must be 0 or 1")
+                raise ScenarioError(
+                    f"flows[{index}].{fwd_mode_field} must be {FWD_MODE_DESCRIPTION}"
+                )
 
         if src >= num_npus or dst >= num_npus:
             raise ScenarioError(f"flows[{index}] endpoints must be server IDs below num_npus")
@@ -459,6 +496,104 @@ def expand_half_doubling_traffic(
     }
 
 
+def physical_link_count(links: list[dict[str, Any]], src: int, dst: int) -> int:
+    return sum(
+        1
+        for link in links
+        if (link["src"] == src and link["dst"] == dst)
+        or (link["src"] == dst and link["dst"] == src)
+    )
+
+
+def normalize_link_down(
+    raw_link_down: Any,
+    links: list[dict[str, Any]],
+    node_count: int,
+) -> list[dict[str, int]]:
+    if raw_link_down is None:
+        return []
+    if not isinstance(raw_link_down, list):
+        raise ScenarioError("network.link_down must be a list")
+
+    entries: list[dict[str, int]] = []
+    for index, raw_entry in enumerate(raw_link_down):
+        if not isinstance(raw_entry, dict):
+            raise ScenarioError(f"network.link_down[{index}] must be an object")
+        time_us = require_int(
+            raw_entry.get("time_us"), f"network.link_down[{index}].time_us"
+        )
+        src = require_int(raw_entry.get("src"), f"network.link_down[{index}].src")
+        dst = require_int(raw_entry.get("dst"), f"network.link_down[{index}].dst")
+        if src >= node_count or dst >= node_count:
+            raise ScenarioError(f"network.link_down[{index}] references an invalid node")
+
+        available_links = physical_link_count(links, src, dst)
+        if available_links == 0:
+            raise ScenarioError(f"network.link_down[{index}] references a missing link")
+
+        has_link_idx = "link_idx" in raw_entry
+        has_count = "count" in raw_entry
+        if has_link_idx and has_count:
+            raise ScenarioError(
+                f"network.link_down[{index}] may define only one of link_idx or count"
+            )
+        if has_link_idx:
+            link_idx = require_int(
+                raw_entry["link_idx"], f"network.link_down[{index}].link_idx", 1
+            )
+            if link_idx > available_links:
+                raise ScenarioError(
+                    f"network.link_down[{index}].link_idx exceeds parallel link count"
+                )
+            entries.append({"time_us": time_us, "src": src, "dst": dst, "link_idx": link_idx})
+        elif has_count:
+            count = require_int(
+                raw_entry["count"], f"network.link_down[{index}].count"
+            )
+            if count > available_links:
+                raise ScenarioError(
+                    f"network.link_down[{index}].count exceeds parallel link count"
+                )
+            for link_idx in range(1, count + 1):
+                entries.append(
+                    {"time_us": time_us, "src": src, "dst": dst, "link_idx": link_idx}
+                )
+        else:
+            raise ScenarioError(
+                f"network.link_down[{index}] must define link_idx or count"
+            )
+
+    return sorted(entries, key=lambda item: (item["time_us"], item["src"], item["dst"], item["link_idx"]))
+
+
+def normalize_buffer_config(raw_buffer_config: Any) -> dict[str, str]:
+    if raw_buffer_config is None:
+        return {}
+    if not isinstance(raw_buffer_config, dict):
+        raise ScenarioError("network.buffer_config must be an object")
+
+    field_to_config_key = {
+        "long_dist_headroom": "LONG_DIST_HEADROOM",
+        "long_dist_reserve": "LONG_DIST_RESERVE",
+        "short_hdrm_size": "SHORT_HDRM_SIZE",
+        "short_reserve_size": "SHORT_RESERVE_SIZE",
+        "long_buffer_size": "LONG_BUFFER_SIZE",
+        "short_buffer_size": "SHORT_BUFFER_SIZE",
+    }
+    normalized: dict[str, str] = {}
+    for field, value in raw_buffer_config.items():
+        if field not in field_to_config_key:
+            raise ScenarioError(f"network.buffer_config.{field} is not supported")
+        config_key = field_to_config_key[field]
+        normalized[config_key] = str(parse_byte_size(value, f"network.buffer_config.{field}"))
+
+    if "SHORT_HDRM_SIZE" in normalized and "SHORT_RESERVE_SIZE" not in normalized:
+        normalized["SHORT_RESERVE_SIZE"] = normalized["SHORT_HDRM_SIZE"]
+    if "LONG_DIST_HEADROOM" in normalized and "LONG_DIST_RESERVE" not in normalized:
+        normalized["LONG_DIST_RESERVE"] = normalized["LONG_DIST_HEADROOM"]
+    return normalized
+
+
 def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
     name = raw.get("name", "custom_network")
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
@@ -590,14 +725,19 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
         network.get("default_fwd_mode", 0), "network.default_fwd_mode"
     )
     if default_fwd_mode not in (0, 1):
-        raise ScenarioError("network.default_fwd_mode must be 0 or 1")
+        raise ScenarioError(
+            f"network.default_fwd_mode must be {FWD_MODE_DESCRIPTION}"
+        )
     for flow in flows:
         if flow["fwd_mode"] is None:
             flow["fwd_mode"] = default_fwd_mode
 
     flow_strategy = require_int(network.get("flow_strategy", 0), "network.flow_strategy")
     if flow_strategy not in (0, 1):
-        raise ScenarioError("network.flow_strategy must be 0=ECMP or 1=PathPinning")
+        raise ScenarioError(
+            "network.flow_strategy must be 0=ECMP or 1=PathPinning "
+            "for flow-based fwd_mode=0 traffic"
+        )
     packet_strategy = require_int(
         network.get("packet_strategy", 0), "network.packet_strategy"
     )
@@ -621,6 +761,8 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
     if qlen_mon_end_ns < qlen_mon_start_ns:
         raise ScenarioError("network.qlen_mon_end_ns must be >= qlen_mon_start_ns")
 
+    link_down = normalize_link_down(network.get("link_down"), links, node_count)
+    buffer_config = normalize_buffer_config(network.get("buffer_config"))
     config_overrides = normalize_config_overrides(network.get("config_overrides"))
 
     ecn_thresholds = None
@@ -685,6 +827,8 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
             "qlen_mon_start_ns": qlen_mon_start_ns,
             "qlen_mon_end_ns": qlen_mon_end_ns,
             "qlen_mon_interval_ns": qlen_mon_interval_ns,
+            "link_down": link_down,
+            "buffer_config": buffer_config,
             "ecn_thresholds": ecn_thresholds,
             "config_overrides": config_overrides,
         },
@@ -730,9 +874,9 @@ def write_flow_file(scenario: dict[str, Any], output_path: Path) -> None:
             "",
             "# columns:",
             "# first row: flow_count",
-            "# flow rows: src dst priority_group dst_port payload_bytes start_time_seconds strategy",
-            "# strategy: 0=flow ECMP, 1=packet spray",
-            "# ASTRA-sim maps row order to comm_tag = row_index + 1 for start/strategy overrides.",
+            "# flow rows: src dst priority_group dst_port payload_bytes start_time_seconds fwd_mode",
+            f"# fwd_mode: {FWD_MODE_DESCRIPTION}",
+            "# ASTRA-sim maps row order to comm_tag = row_index + 1 for start/fwd_mode overrides.",
         ]
     )
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -848,7 +992,7 @@ def write_traffic_manifest(scenario: dict[str, Any], output_path: Path) -> None:
                     "bytes": "payload bytes",
                     "tag": "ASTRA-sim comm_tag; explicit flows should match flow row order for HPCC-style overrides",
                     "start_time_ns": "requested flow start time in ns",
-                    "fwd_mode": "0=flow ECMP, 1=packet spray",
+                    "fwd_mode": FWD_MODE_DESCRIPTION,
                 },
             },
             indent=2,
@@ -863,6 +1007,14 @@ def rewrite_network_config(
     output_config: Path,
     replacements: dict[str, str],
 ) -> None:
+    def render_replacement(key: str, value: str) -> list[str]:
+        value_lines = str(value).splitlines()
+        if len(value_lines) > 1:
+            return [key, *value_lines]
+        if value_lines and value_lines[0]:
+            return [f"{key} {value_lines[0]}"]
+        return [key]
+
     seen: set[str] = set()
     output_lines: list[str] = []
     for line in base_config.read_text(encoding="utf-8").splitlines():
@@ -872,7 +1024,7 @@ def rewrite_network_config(
             continue
         key = stripped.split(maxsplit=1)[0]
         if key in replacements:
-            output_lines.append(f"{key} {replacements[key]}")
+            output_lines.extend(render_replacement(key, replacements[key]))
             seen.add(key)
         else:
             output_lines.append(line)
@@ -883,8 +1035,19 @@ def rewrite_network_config(
             output_lines.append("")
         output_lines.append("# Added by generate_custom_inputs.py")
         for key in missing:
-            output_lines.append(f"{key} {replacements[key]}")
+            output_lines.extend(render_replacement(key, replacements[key]))
     output_config.write_text("\n".join(output_lines) + "\n", encoding="utf-8")
+
+
+def render_link_down(entries: list[dict[str, int]]) -> str:
+    if not entries:
+        return "0"
+    lines = [str(len(entries))]
+    lines.extend(
+        f"{entry['time_us']} {entry['src']} {entry['dst']} {entry['link_idx']}"
+        for entry in entries
+    )
+    return "\n".join(lines)
 
 
 def generate(
@@ -935,7 +1098,9 @@ def generate(
         "FLOW_STRATEGY": str(network["flow_strategy"]),
         "PACKET_STRATEGY": str(network["packet_strategy"]),
         "ENABLE_TRACE": str(network["enable_trace"]),
+        "LINK_DOWN": render_link_down(network["link_down"]),
     }
+    replacements.update(network["buffer_config"])
     if network["ecn_thresholds"] is not None:
         thresholds = network["ecn_thresholds"]
         replacements.update(

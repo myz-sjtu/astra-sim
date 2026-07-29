@@ -1,0 +1,14 @@
+{
+  "name": "2dc_64_clos",
+  "num_npus": 64,
+  "workload_configuration": "../../../examples/custom_network/generated/2dc_64_clos/workload/custom_traffic",
+  "system_configuration": "../../../examples/system/native_collectives/Ring_4chunks.json",
+  "network_configuration": "../../../examples/custom_network/generated/2dc_64_clos/network_config.txt",
+  "remote_memory_configuration": "../../../examples/remote_memory/analytical/no_memory_expansion.json",
+  "logical_topology_configuration": "../../../examples/custom_network/generated/2dc_64_clos/logical_topology.json",
+  "comm_group_configuration": "empty",
+  "fct_output": "scratch/output/2dc_64_clos/fct.txt",
+  "output_directory": "scratch/output/2dc_64_clos",
+  "annotation_command": "python3 ../../../examples/custom_network/annotate_output_files.py --output-dir scratch/output/2dc_64_clos",
+  "traffic_manifest": "../../../examples/custom_network/generated/2dc_64_clos/traffic_manifest.json"
+}

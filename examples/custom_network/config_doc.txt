@@ -56,15 +56,25 @@ FLOW_STRATEGY 1 {flow-based switch forwarding: 0 ECMP, 1 PathPinning}
 PACKET_STRATEGY 0 {packet-based switch forwarding: 0 round-robin packet spray}
 DEFAULT_FWD_MODE 0 {default per-flow forwarding mode: 0 flow-based forwarding, 1 packet-spray forwarding}
 
-LINK_DOWN 0 0 0 {link_down_time_us node_a node_b. If time > 0, all up links between node_a and node_b are taken down at 2s + time}
+LINK_DOWN 0 {no link failures}
+LINK_DOWN {multi-line format}
+2 {number of links to take down}
+0 68 69 1 {time_us src dst link_idx; link_idx starts at 1 among parallel src->dst links}
+0 68 69 2 {same time_us entries are batched and rerouted once}
 ENABLE_TRACE 0 {0: disable packet-level tracing, 1: enable tracing for TRACE_FILE nodes}
 
 KMAX_MAP 2 200000000000 2400 400000000000 3200 {map from link bandwidth in bps to ECN kmax threshold}
 KMIN_MAP 2 200000000000 600 400000000000 800 {map from link bandwidth in bps to ECN kmin threshold}
 PMAX_MAP 2 200000000000 0.2 400000000000 0.2 {map from link bandwidth in bps to ECN pmax probability}
 
-BUFFER_SIZE 32 {per-switch MMU buffer size in MB}
-HEADROOM_FACTOR 3 {PFC headroom = link_rate * link_delay / 8 / 1e9 * HEADROOM_FACTOR}
+BUFFER_SIZE 32 {legacy fallback per-switch MMU buffer size in MB}
+HEADROOM_FACTOR 3 {legacy fallback PFC headroom = link_rate * link_delay / 8 / 1e9 * HEADROOM_FACTOR}
+LONG_DIST_HEADROOM 10000000B {long-distance port headroom; long-distance means channel delay >=100us}
+LONG_DIST_RESERVE 12500000B {long-distance port reserve}
+SHORT_HDRM_SIZE 64250B {short-distance port headroom}
+SHORT_RESERVE_SIZE 64250B {short-distance port reserve; defaults to SHORT_HDRM_SIZE in generated configs}
+LONG_BUFFER_SIZE 377265536B {switch buffer used when the switch has any long-distance port}
+SHORT_BUFFER_SIZE 32MB {switch buffer used when the switch has no long-distance port}
 
 TOPOLOGY_FORMAT_LEAF_SPINE
 70 4 2 112 {node_count leaf_switch_count spine_switch_count link_count}
