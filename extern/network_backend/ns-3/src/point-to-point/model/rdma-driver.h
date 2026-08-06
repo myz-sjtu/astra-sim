@@ -33,7 +33,7 @@ public:
 	void SetRdmaHw(Ptr<RdmaHw> rdma);
 
 	// add a queue pair
-  void AddQueuePair(uint32_t src, uint32_t dest, uint64_t tag, uint64_t size, uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, uint16_t _sport, uint16_t _dport, uint32_t win, uint64_t baseRtt, Callback<void> notifyAppFinish, Callback<void> notifyAppSent, uint8_t fwd_mode=0);
+  void AddQueuePair(uint32_t src, uint32_t dest, uint64_t tag, uint64_t size, uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, uint16_t _sport, uint16_t _dport, uint32_t win, uint64_t baseRtt, double waitAcktimer, Callback<void> notifyAppFinish, Callback<void> notifyAppSent, uint8_t fwd_mode=0);
 
 	// callback when qp completes
 	void QpComplete(Ptr<RdmaQueuePair> q);

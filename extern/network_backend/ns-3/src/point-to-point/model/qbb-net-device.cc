@@ -180,6 +180,11 @@ namespace ns3 {
 		static TypeId tid = TypeId("ns3::QbbNetDevice")
 			.SetParent<PointToPointNetDevice>()
 			.AddConstructor<QbbNetDevice>()
+			.AddAttribute("RtoEnabled",
+				"Enable timeout retransmission",
+				BooleanValue(false),
+				MakeBooleanAccessor(&QbbNetDevice::m_rtoEnabled),
+				MakeBooleanChecker())
 			.AddAttribute("QbbEnabled",
 				"Enable the generation of PAUSE packet.",
 				BooleanValue(true),
@@ -233,6 +238,7 @@ namespace ns3 {
 	QbbNetDevice::QbbNetDevice()
 	{
 		NS_LOG_FUNCTION(this);
+		m_rtoEnabled = false;
 		m_ecn_source = new std::vector<ECNAccount>;
 		for (uint32_t i = 0; i < qCnt; i++){
 			m_paused[i] = false;
@@ -244,6 +250,15 @@ namespace ns3 {
 	QbbNetDevice::~QbbNetDevice()
 	{
 		NS_LOG_FUNCTION(this);
+	}
+
+	void QbbNetDevice::Retransmit(Ptr<RdmaQueuePair> qp, Ptr<Node> /*node*/)
+	{
+		if (!qp || qp->IsFinished())
+			return;
+
+		qp->snd_nxt = qp->snd_una;
+		TriggerTransmit();
 	}
 
 	void
@@ -285,6 +300,17 @@ namespace ns3 {
 				// a qp dequeue a packet
 				Ptr<RdmaQueuePair> lastQp = m_rdmaEQ->GetQp(qIndex);
 				p = m_rdmaEQ->DequeueQindex(qIndex);
+				if (m_rtoEnabled && !lastQp->m_retransmit.IsPending()) {
+					CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header |
+									CustomHeader::L4_Header);
+					p->PeekHeader(ch);
+					if (ch.l3Prot == 0x11) {
+						lastQp->m_retransmit =
+							Simulator::Schedule(MicroSeconds(lastQp->m_waitAckTimer),
+												&QbbNetDevice::Retransmit, this,
+												lastQp, m_node);
+					}
+				}
 				// transmit
 				m_traceQpDequeue(p, lastQp);
 				TransmitStart(p);

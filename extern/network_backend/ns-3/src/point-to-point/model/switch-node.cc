@@ -72,6 +72,7 @@ SwitchNode::SwitchNode(){
 		m_rrCounter[i] = 0;
 	m_flowStrategy = 0;
 	m_packetStrategy = 0;
+	m_dropCnt = 0;
 }
 
 int SwitchNode::GetOutDev(Ptr<const Packet> p, CustomHeader &ch){
@@ -215,6 +216,7 @@ void SwitchNode::SendToDev(Ptr<Packet>p, CustomHeader &ch){
 				m_mmu->UpdateIngressAdmission(inDev, qIndex, p->GetSize());
 				m_mmu->UpdateEgressAdmission(idx, qIndex, p->GetSize());
 			}else{
+				RecordDrop();
 				return; // Drop
 			}
 			CheckAndSendPfc(inDev, qIndex);
@@ -223,8 +225,17 @@ void SwitchNode::SendToDev(Ptr<Packet>p, CustomHeader &ch){
 		m_devices[idx]->SwitchSend(qIndex, p, ch);
 	}else
 	{
+		RecordDrop();
 		return; // Drop
 	}
+}
+
+void SwitchNode::RecordDrop(){
+	m_dropCnt++;
+}
+
+uint64_t SwitchNode::GetDropCount() const{
+	return m_dropCnt;
 }
 
 uint32_t SwitchNode::EcmpHash(const uint8_t* key, size_t len, uint32_t seed) {

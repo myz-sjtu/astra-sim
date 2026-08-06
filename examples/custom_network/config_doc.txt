@@ -1,5 +1,6 @@
 ENABLE_PFC 1 {0: disable PFC, 1: enable PFC on QbbNetDevice}
 ENABLE_QCN 1 {0: disable QCN/ECN marking, 1: enable QCN/ECN marking}
+ENABLE_RTO 0 {0: disable sender timeout retransmission, 1: enable RTO}
 USE_DYNAMIC_PFC_THRESHOLD 1 {0: static PFC threshold, 1: dynamic PFC threshold}
 PAUSE_TIME 5 {PFC pause time configured on QbbNetDevice}
 
@@ -11,13 +12,14 @@ TRACE_FILE ../../../examples/custom_network/generated/<name>/trace.txt {input li
 TRACE_OUTPUT_FILE scratch/output/<name>/mix.tr {output packet-level trace file}
 FCT_OUTPUT_FILE scratch/output/<name>/fct.txt {output flow completion time file}
 PFC_OUTPUT_FILE scratch/output/<name>/pfc.txt {output PFC event file}
+DROP_LOG_FILE scratch/output/<name>/drop-log.txt {output per-switch packet drop count file}
 QLEN_MON_FILE scratch/output/<name>/qlen.txt {output queue length monitor file}
 
 QLEN_MON_START 2000000000 {start time for queue length monitoring, in ns}
 QLEN_MON_END 3000000000 {end time for queue length monitoring, in ns}
 QLEN_MON_INTERVAL 100000 {queue length monitoring interval, in ns}
 
-SIMULATOR_STOP_TIME 40000000000000.00 {legacy field parsed by config reader; ASTRA-sim completion normally stops simulation}
+SIMULATOR_STOP_TIME 50.00 {hard ns-3 stop time in seconds; ASTRA-sim completion can still stop earlier}
 
 CC_MODE 12 {congestion control mode. Common values: 1 DCQCN, 3 HPCC, 7 TIMELY, 8 DCTCP, 10 HPCC-PINT, 12 project-specific mode}
 ALPHA_RESUME_INTERVAL 1 {DCQCN alpha resume interval}
@@ -35,6 +37,7 @@ ERROR_RATE_PER_LINK 0.0000 {default per-link packet error rate; per-topology lin
 L2_CHUNK_SIZE 4000 {layer-2 chunk size; 0 disables chunk mode}
 L2_ACK_INTERVAL 1 {number of packets between ACKs; 1 means ACK every packet}
 L2_BACK_TO_ZERO 0 {0: go-back-0 behavior disabled, 1: go-back-to-zero enabled}
+WAIT_ACK_TIMEOUT 32000 {RTO local ACK timeout in microseconds}
 
 HAS_WIN 1 {0: no RDMA send window, 1: use RDMA send window}
 GLOBAL_T 0 {0: use per-pair RTT/BDP, 1: use max RTT/BDP globally}
@@ -90,6 +93,6 @@ TOPOLOGY_FORMAT_LEGACY
 NOTES
 Config files under examples/custom_network/config_hpcc_case*.txt are base templates.
 generate_custom_inputs.py rewrites TOPOLOGY_FILE, FLOW_FILE, TRACE_FILE, output paths, FLOW_STRATEGY, DEFAULT_FWD_MODE, monitor times, and ECN maps into generated/<name>/network_config.txt.
-scenario.network.config_overrides can rewrite raw config keys such as ENABLE_PFC, ENABLE_QCN, CC_MODE, ACK_HIGH_PRIO, and USE_DYNAMIC_PFC_THRESHOLD.
+scenario.network.config_overrides can rewrite raw config keys such as ENABLE_PFC, ENABLE_QCN, ENABLE_RTO, WAIT_ACK_TIMEOUT, CC_MODE, ACK_HIGH_PRIO, and USE_DYNAMIC_PFC_THRESHOLD.
 Use FLOW_STRATEGY 1 with DEFAULT_FWD_MODE 0 to exercise HPCC-Dev-style path pinning.
 Use DEFAULT_FWD_MODE 1 to exercise packet spray; packet spray uses PACKET_STRATEGY.

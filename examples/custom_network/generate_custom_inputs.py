@@ -1149,6 +1149,7 @@ def generate(
         "TRACE_OUTPUT_FILE": f"scratch/output/{name}/mix.tr",
         "FCT_OUTPUT_FILE": f"scratch/output/{name}/fct.txt",
         "PFC_OUTPUT_FILE": f"scratch/output/{name}/pfc.txt",
+        "DROP_LOG_FILE": f"scratch/output/{name}/drop-log.txt",
         "QLEN_MON_FILE": f"scratch/output/{name}/qlen.txt",
         "QLEN_MON_START": str(network["qlen_mon_start_ns"]),
         "QLEN_MON_END": str(network["qlen_mon_end_ns"]),

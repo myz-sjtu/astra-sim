@@ -137,6 +137,8 @@ protected:
 
 	//Ptr<Node> m_node;
 
+  void Retransmit(Ptr<RdmaQueuePair> qp, Ptr<Node> node);
+
   bool TransmitStart (Ptr<Packet> p);
 
   virtual void DoDispose(void);
@@ -165,6 +167,7 @@ protected:
   bool m_dynamicth;
   uint32_t m_pausetime;	//< Time for each Pause
   bool m_paused[qCnt];	//< Whether a queue paused
+  bool m_rtoEnabled;	//< Timeout retransmission enabled
 
   //qcn
 

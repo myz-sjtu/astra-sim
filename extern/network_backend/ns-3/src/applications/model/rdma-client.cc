@@ -31,6 +31,7 @@
 #include "ns3/simulator.h"
 #include "ns3/socket-factory.h"
 #include "ns3/socket.h"
+#include "ns3/double.h"
 #include "ns3/uinteger.h"
 #include <ns3/rdma-driver.h>
 #include <stdio.h>
@@ -73,6 +74,10 @@ TypeId RdmaClient::GetTypeId(void) {
           .AddAttribute("BaseRtt", "Base Rtt", UintegerValue(0),
                         MakeUintegerAccessor(&RdmaClient::m_baseRtt),
                         MakeUintegerChecker<uint64_t>())
+          .AddAttribute("LocalAckTimeout", "Local ACK timeout in microseconds",
+                        DoubleValue(1000000.0),
+                        MakeDoubleAccessor(&RdmaClient::m_waitAcktimer),
+                        MakeDoubleChecker<double>())
           .AddAttribute("Tag", "Tag", UintegerValue(0),
                         MakeUintegerAccessor(&RdmaClient::tag),
                         MakeUintegerChecker<uint64_t>())
@@ -129,7 +134,7 @@ void RdmaClient::StartApplication(void) {
   Ptr<Node> node = GetNode();
   Ptr<RdmaDriver> rdma = node->GetObject<RdmaDriver>();
   rdma->AddQueuePair(src, dest, tag, m_size, m_pg, m_sip, m_dip, m_sport,
-                     m_dport, m_win, m_baseRtt,
+                     m_dport, m_win, m_baseRtt, m_waitAcktimer,
                      MakeCallback(&RdmaClient::Finish, this),
                      MakeCallback(&RdmaClient::Sent, this),
                      m_fwd_mode);

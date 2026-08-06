@@ -35,6 +35,8 @@ public:
 	// Packet spray round-robin counter per ingress port
 	uint32_t m_rrCounter[pCnt];
 
+	uint64_t m_dropCnt;
+
 protected:
 	bool m_ecnEnabled;
 	uint32_t m_ccMode;
@@ -64,6 +66,8 @@ public:
 	void SetEcmpSeed(uint32_t seed);
 	void AddTableEntry(Ipv4Address &dstAddr, uint32_t intf_idx);
 	void ClearTable();
+	void RecordDrop();
+	uint64_t GetDropCount() const;
 	bool SwitchReceiveFromDevice(Ptr<NetDevice> device, Ptr<Packet> packet, CustomHeader &ch);
 	void SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Packet> p);
 

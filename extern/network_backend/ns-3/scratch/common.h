@@ -22,6 +22,7 @@
 #include "ns3/error-model.h"
 #include "ns3/global-route-manager.h"
 #include "ns3/internet-module.h"
+#include "ns3/node-list.h"
 #include "ns3/ipv4-static-routing-helper.h"
 #include "ns3/packet.h"
 #include "ns3/point-to-point-helper.h"
@@ -51,11 +52,14 @@ NS_LOG_COMPONENT_DEFINE("GENERIC_SIMULATION");
 
 uint32_t cc_mode = 1;
 bool enable_pfc = true, enable_qcn = true, use_dynamic_pfc_threshold = true;
+bool enable_rto = false;
 uint32_t packet_payload_size = 1000, l2_chunk_size = 0, l2_ack_interval = 0;
 double pause_time = 5, simulator_stop_time = 3.01;
+double wait_ack_timeout = 1000000.0; // local ACK timeout in microseconds
 std::string topology_file, flow_file, trace_file, trace_output_file;
 std::string fct_output_file = "fct.txt";
 std::string pfc_output_file = "pfc.txt";
+std::string drop_log_file = "drop.txt";
 
 double alpha_resume_interval = 55, rp_timer, ewma_gain = 1 / 16;
 double rate_decrease_interval = 4;
@@ -268,6 +272,40 @@ Ipv4Address node_id_to_ip(uint32_t id) {
 
 uint32_t ip_to_node_id(Ipv4Address ip) { return (ip.Get() >> 8) & 0xffff; }
 
+std::string GetSiblingOutputFile(const std::string &path,
+                                 const std::string &filename) {
+  size_t slash = path.find_last_of("/\\");
+  if (slash == std::string::npos)
+    return filename;
+  return path.substr(0, slash + 1) + filename;
+}
+
+bool drop_log_dumped = false;
+void DumpDropLog() {
+  if (drop_log_dumped)
+    return;
+  drop_log_dumped = true;
+
+  if (drop_log_file.empty())
+    drop_log_file = GetSiblingOutputFile(fct_output_file, "drop-log.txt");
+
+  std::ofstream fout(drop_log_file.c_str());
+  if (!fout.is_open()) {
+    std::cerr << "Error: cannot open drop log file: " << drop_log_file
+              << std::endl;
+    return;
+  }
+
+  fout << "# switch_id drop_count\n";
+  for (auto node = NodeList::Begin(); node != NodeList::End(); ++node) {
+    if ((*node)->GetNodeType() != 1)
+      continue;
+    Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(*node);
+    if (sw)
+      fout << sw->GetId() << " " << sw->GetDropCount() << "\n";
+  }
+}
+
 void get_pfc(FILE *fout, Ptr<QbbNetDevice> dev, uint32_t type) {
   fprintf(fout, "%lu %u %u %u %u\n", Simulator::Now().GetTimeStep(),
           dev->GetNode()->GetId(), dev->GetNode()->GetNodeType(),
@@ -287,6 +325,12 @@ struct QlenDistribution {
 };
 map<uint32_t, map<uint32_t, uint32_t>> queue_result;
 void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
+  uint64_t now = Simulator::Now().GetTimeStep();
+  if (qlen_mon_end > 0 && now > qlen_mon_end) {
+    fflush(qlen_output);
+    return;
+  }
+
   for (uint32_t i = 0; i < n->GetN(); i++) {
     if (n->Get(i)->GetNodeType() == 1) { // is switch
       Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(n->Get(i));
@@ -334,8 +378,12 @@ void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
     }
   }
   fflush(qlen_output);
-  Simulator::Schedule(NanoSeconds(qlen_mon_interval), &monitor_buffer,
-                      qlen_output, n);
+  if (qlen_mon_interval > 0) {
+    uint64_t next = now + qlen_mon_interval;
+    if (qlen_mon_end == 0 || next <= qlen_mon_end)
+      Simulator::Schedule(NanoSeconds(qlen_mon_interval), &monitor_buffer,
+                          qlen_output, n);
+  }
 }
 
 void CalculateRoute(Ptr<Node> host) {
@@ -598,6 +646,10 @@ bool ReadConf(string network_configuration) {
       uint32_t v;
       conf >> v;
       enable_qcn = v;
+    } else if (key.compare("ENABLE_RTO") == 0) {
+      uint32_t v;
+      conf >> v;
+      enable_rto = v;
     } else if (key.compare("ENABLE_PFC") == 0) {
       uint32_t v;
       conf >> v;
@@ -630,6 +682,10 @@ bool ReadConf(string network_configuration) {
       uint32_t v;
       conf >> v;
       l2_back_to_zero = v;
+    } else if (key.compare("WAIT_ACK_TIMEOUT") == 0) {
+      double v;
+      conf >> v;
+      wait_ack_timeout = v;
     } else if (key.compare("TOPOLOGY_FILE") == 0) {
       std::string v;
       conf >> v;
@@ -730,6 +786,8 @@ bool ReadConf(string network_configuration) {
       conf >> nic_total_pause_time;
     } else if (key.compare("PFC_OUTPUT_FILE") == 0) {
       conf >> pfc_output_file;
+    } else if (key.compare("DROP_LOG_FILE") == 0) {
+      conf >> drop_log_file;
     } else if (key.compare("LINK_DOWN") == 0) {
       ReadLinkDownConfig(conf);
     } else if (key.compare("ENABLE_TRACE") == 0) {
@@ -824,6 +882,8 @@ bool ReadConf(string network_configuration) {
     fflush(stdout);
   }
   conf.close();
+  if (drop_log_file.empty())
+    drop_log_file = GetSiblingOutputFile(fct_output_file, "drop-log.txt");
   return true;
 }
 
@@ -833,6 +893,7 @@ void SetConfig() {
   Config::SetDefault("ns3::QbbNetDevice::QbbEnabled", BooleanValue(enable_pfc));
   Config::SetDefault("ns3::QbbNetDevice::PauseTime", UintegerValue(pause_time));
   Config::SetDefault("ns3::QbbNetDevice::QcnEnabled", BooleanValue(enable_qcn));
+  Config::SetDefault("ns3::QbbNetDevice::RtoEnabled", BooleanValue(enable_rto));
   Config::SetDefault("ns3::QbbNetDevice::DynamicThreshold",
                      BooleanValue(dynamicth));
 
@@ -1146,6 +1207,7 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
       rdmaHw->SetAttribute("L2BackToZero", BooleanValue(l2_back_to_zero));
       rdmaHw->SetAttribute("L2ChunkSize", UintegerValue(l2_chunk_size));
       rdmaHw->SetAttribute("L2AckInterval", UintegerValue(l2_ack_interval));
+      rdmaHw->SetAttribute("RtoEnabled", BooleanValue(enable_rto));
       rdmaHw->SetAttribute("CcMode", UintegerValue(cc_mode));
       rdmaHw->SetAttribute("RateDecreaseInterval",
                            DoubleValue(rate_decrease_interval));
@@ -1286,8 +1348,11 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
 
   // schedule buffer monitor
   FILE *qlen_output = fopen(qlen_mon_file.c_str(), "w");
-  Simulator::Schedule(NanoSeconds(qlen_mon_start), &monitor_buffer, qlen_output,
-                      &n);
+  if (qlen_mon_end == 0 || qlen_mon_start <= qlen_mon_end)
+    Simulator::Schedule(NanoSeconds(qlen_mon_start), &monitor_buffer, qlen_output,
+                        &n);
+  else
+    fclose(qlen_output);
 
   return true;
 }

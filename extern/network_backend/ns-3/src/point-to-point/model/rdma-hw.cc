@@ -19,6 +19,11 @@ TypeId RdmaHw::GetTypeId (void)
 {
 	static TypeId tid = TypeId ("ns3::RdmaHw")
 		.SetParent<Object> ()
+		.AddAttribute("RtoEnabled",
+				"Enable timeout retransmission",
+				BooleanValue(false),
+				MakeBooleanAccessor(&RdmaHw::m_rtoEnabled),
+				MakeBooleanChecker())
 		.AddAttribute("MinRate",
 				"Minimum rate of a throttled flow",
 				DataRateValue(DataRate("100Mb/s")),
@@ -227,7 +232,7 @@ Ptr<RdmaQueuePair> RdmaHw::GetQp(uint32_t dip, uint16_t sport, uint16_t pg){
 		return it->second;
 	return NULL;
 }
-void RdmaHw::AddQueuePair(uint32_t src, uint32_t dest, uint64_t tag, uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Address dip, uint16_t sport, uint16_t dport, uint32_t win, uint64_t baseRtt, Callback<void> notifyAppFinish, Callback<void> notifyAppSent, uint8_t fwd_mode){
+void RdmaHw::AddQueuePair(uint32_t src, uint32_t dest, uint64_t tag, uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Address dip, uint16_t sport, uint16_t dport, uint32_t win, uint64_t baseRtt, double waitAcktimer, Callback<void> notifyAppFinish, Callback<void> notifyAppSent, uint8_t fwd_mode){
 	// create qp
 	Ptr<RdmaQueuePair> qp = CreateObject<RdmaQueuePair>(pg, sip, dip, sport, dport);
 	qp->SetSrc(src);
@@ -240,6 +245,7 @@ void RdmaHw::AddQueuePair(uint32_t src, uint32_t dest, uint64_t tag, uint64_t si
 	qp->SetVarWin(m_var_win);
 	qp->SetAppNotifyCallback(notifyAppFinish);
 	qp->SetAppSentCallback(notifyAppSent);
+	qp->SetWaitAckTimer(waitAcktimer);
 	qp->m_fwd_mode = fwd_mode;
 	// add qp
 	uint32_t nic_idx = GetNicIdxOfQp(qp);
@@ -484,10 +490,36 @@ int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch){
 	}else if (m_cc_mode == 10){
 		HandleAckHpPint(qp, p, ch);
 	}
+
+	if (m_rtoEnabled) {
+		Simulator::Cancel(qp->m_retransmit);
+		if (!qp->IsFinished()) {
+			if (ch.l3Prot == 0xFD) {
+				qp->m_retransmit =
+					Simulator::Schedule(MicroSeconds(qp->m_waitAckTimer),
+										&RdmaHw::Retransmit, this, qp, 0u);
+			} else if (ch.l3Prot == 0xFC &&
+					   (qp->snd_nxt > qp->snd_una || qp->GetBytesLeft() > 0)) {
+				qp->m_retransmit =
+					Simulator::Schedule(MicroSeconds(qp->m_waitAckTimer),
+										&RdmaHw::Retransmit, this, qp, 0u);
+			}
+		}
+	}
 	// ACK may advance the on-the-fly window, allowing more packets to send
 	dev->TriggerTransmit();
 	//std:://cout << "ack triggere transmitted\n";
 	return 0;
+}
+
+void RdmaHw::Retransmit(Ptr<RdmaQueuePair> qp, uint32_t /*l3Prot*/) {
+	if (!qp || qp->IsFinished())
+		return;
+
+	uint32_t nic_idx = GetNicIdxOfQp(qp);
+	Ptr<QbbNetDevice> dev = m_nic[nic_idx].dev;
+	RecoverQueue(qp);
+	dev->TriggerTransmit();
 }
 
 int RdmaHw::Receive(Ptr<Packet> p, CustomHeader &ch){
@@ -580,6 +612,7 @@ void RdmaHw::RecoverQueue(Ptr<RdmaQueuePair> qp){
 
 void RdmaHw::QpComplete(Ptr<RdmaQueuePair> qp){
 	NS_ASSERT(!m_qpCompleteCallback.IsNull());
+	Simulator::Cancel(qp->m_retransmit);
 	if (m_cc_mode == 1){
 		Simulator::Cancel(qp->mlx.m_eventUpdateAlpha);
 		Simulator::Cancel(qp->mlx.m_eventDecreaseRate);

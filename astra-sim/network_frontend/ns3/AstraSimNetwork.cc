@@ -60,6 +60,7 @@ class NS3BackendCompletionTracker {
             AstraSim::LoggerFactory::get_logger("network")->debug(
                 "All ranks have finished. Exiting simulation.");
             // cout << "All ranks have finished. Exiting simulation.\n";
+            DumpDropLog();
             Simulator::Stop();
             Simulator::Destroy();
             exit(0);
@@ -310,6 +311,10 @@ int main(int argc, char* argv[]) {
     }
 
     // Run the simulation by triggering the ns3 event queue.
+    if (simulator_stop_time > 0) {
+        Simulator::Stop(Seconds(simulator_stop_time));
+    }
     Simulator::Run();
+    DumpDropLog();
     return 0;
 }

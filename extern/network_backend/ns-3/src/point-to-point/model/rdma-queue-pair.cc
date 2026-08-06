@@ -41,6 +41,7 @@ RdmaQueuePair::RdmaQueuePair(uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, ui
 	m_var_win = false;
 	m_rate = 0;
 	m_nextAvail = Time(0);
+	m_waitAckTimer = 0;
 	mlx.m_alpha = 1;
 	mlx.m_alpha_cnp_arrived = false;
 	mlx.m_first_cnp = true;
@@ -127,6 +128,10 @@ void RdmaQueuePair::SetAppNotifyCallback(Callback<void> notifyAppFinish){
 
 void RdmaQueuePair::SetAppSentCallback(Callback<void> notifyAppSent){
 	m_notifyAppSent = notifyAppSent;
+}
+
+void RdmaQueuePair::SetWaitAckTimer(double waitAckTimer){
+	m_waitAckTimer = waitAckTimer;
 }
 
 

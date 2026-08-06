@@ -18,6 +18,11 @@ NOTES = {
         "# time_ns node_id node_type if_index type",
         "# type: 1=PFC pause, 0=PFC resume.",
     ],
+    "drop-log.txt": [
+        "# columns:",
+        "# switch_id drop_count",
+        "# drop_count counts packets dropped by SwitchNode forwarding/admission.",
+    ],
     "qlen.txt": [
         "# row format:",
         "# time <time_ns> <switch_id> repeated pairs: j <if_index> <egress_queue_bytes>",

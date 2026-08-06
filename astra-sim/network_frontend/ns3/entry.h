@@ -183,8 +183,8 @@ void send_flow(int src_id, int dst, int maxPacketCount,
       maxPacketCount,
       has_win ? (global_t == 1 ? maxBdp : pairBdp[n.Get(src_id)][n.Get(dst)])
               : 0,
-      global_t == 1 ? maxRtt : pairRtt[src_id][dst], msg_handler, fun_arg, tag,
-      src_id, dst, effective_fwd_mode);
+      global_t == 1 ? maxRtt : pairRtt[src_id][dst], wait_ack_timeout,
+      msg_handler, fun_arg, tag, src_id, dst, effective_fwd_mode);
   ApplicationContainer appCon = clientHelper.Install(n.Get(src_id));
   uint64_t now_ns = Simulator::Now().GetTimeStep();
   appCon.Start(configured_start_ns > now_ns

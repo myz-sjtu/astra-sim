@@ -59,12 +59,15 @@
       "short_buffer_size": "32MB"
     },
     "config_overrides": {
+      "ENABLE_RTO" : 1,
       "ENABLE_PFC": 1,
       "ENABLE_QCN": 0,
       "USE_DYNAMIC_PFC_THRESHOLD": 1,
       "CC_MODE": 1,
-      "ACK_HIGH_PRIO": 0,
-      "GLOBAL_T": 1
+      "ACK_HIGH_PRIO": 1,
+      "GLOBAL_T": 1,
+      "WAIT_ACK_TIMEOUT" : 32000,
+      "SIMULATOR_STOP_TIME": 50.0
     },
     "ecn_thresholds": [
       {

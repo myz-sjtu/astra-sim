@@ -33,6 +33,12 @@ public:
 	uint32_t lastPktSize;
 	Callback<void> m_notifyAppFinish;
 	Callback<void> m_notifyAppSent;
+
+	/********** Retransmission **********/
+	double m_waitAckTimer;
+	EventId m_retransmit;
+	/************************************/
+
 	/******************************
 	 * runtime states
 	 *****************************/
@@ -94,6 +100,7 @@ public:
 	void SetVarWin(bool v);
 	void SetAppNotifyCallback(Callback<void> notifyAppFinish);
 	void SetAppSentCallback(Callback<void> notifyAppSent);
+	void SetWaitAckTimer(double waitAckTimer);
 
 	uint64_t GetBytesLeft();
 	uint64_t GetInitialSize();
