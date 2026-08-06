@@ -1,5 +1,5 @@
 {
-  "name": "case1",
+  "name": "case1_packet",
   "num_npus": 10,
   "workload_configuration": "../../../examples/custom_network/generated/case1/workload/custom_traffic",
   "system_configuration": "../../../examples/system/native_collectives/Ring_4chunks.json",
@@ -7,8 +7,9 @@
   "remote_memory_configuration": "../../../examples/remote_memory/analytical/no_memory_expansion.json",
   "logical_topology_configuration": "../../../examples/custom_network/generated/case1/logical_topology.json",
   "comm_group_configuration": "empty",
-  "fct_output": "scratch/output/case1/fct.txt",
-  "output_directory": "scratch/output/case1",
-  "annotation_command": "python3 ../../../examples/custom_network/annotate_output_files.py --output-dir scratch/output/case1",
+  "fct_output": "scratch/output/case1_packet/fct.txt",
+  "runtime_output": "scratch/output/case1_packet/runtime.txt",
+  "output_directory": "scratch/output/case1_packet",
+  "annotation_command": "python3 ../../../examples/custom_network/annotate_output_files.py --output-dir scratch/output/case1_packet",
   "traffic_manifest": "../../../examples/custom_network/generated/case1/traffic_manifest.json"
 }

@@ -1,5 +1,5 @@
 {
-  "name": "case1",
+  "name": "case1_packet",
   "num_npus": 10,
   "switches": [
     10,
@@ -129,15 +129,18 @@
   "network": {
     "default_fwd_mode": 1,
     "flow_strategy": 0,
-    "packet_strategy": 0,
+    "packet_strategy": 1,
     "arn_packet_strategy": 1,
+    "arn_scale_size" : 4,
     "enable_arn": 0,
-    "arn_interval_ns": 10000,
-    "arn_congestion_qlen": 6400,
+    "arn_interval_ns": 1000,
+    "arn_congestion_qlen": 100000,
     "enable_trace": 0,
     "qlen_mon_start_ns": 2000000000,
     "qlen_mon_end_ns": 3000000000,
     "qlen_mon_interval_ns": 100000,
+    "q_level": [0, 100000, 200000, 300000, 400000, 500000, 600000, 700000],
+    "load_level": [0, 12500000000, 25000000000, 40000000000, 41000000000, 45000000000, 48000000000, 49000000000],
     "ecn_thresholds": [
       {
         "bandwidth": "400Gbps",

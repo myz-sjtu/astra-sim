@@ -1,0 +1,15 @@
+{
+  "name": "case3_arn_glb",
+  "num_npus": 10,
+  "workload_configuration": "../../../examples/custom_network/generated/case3/workload/custom_traffic",
+  "system_configuration": "../../../examples/system/native_collectives/Ring_4chunks.json",
+  "network_configuration": "../../../examples/custom_network/generated/case3/network_config.txt",
+  "remote_memory_configuration": "../../../examples/remote_memory/analytical/no_memory_expansion.json",
+  "logical_topology_configuration": "../../../examples/custom_network/generated/case3/logical_topology.json",
+  "comm_group_configuration": "empty",
+  "fct_output": "scratch/output/case3_arn_glb/fct.txt",
+  "runtime_output": "scratch/output/case3_arn_glb/runtime.txt",
+  "output_directory": "scratch/output/case3_arn_glb",
+  "annotation_command": "python3 ../../../examples/custom_network/annotate_output_files.py --output-dir scratch/output/case3_arn_glb",
+  "traffic_manifest": "../../../examples/custom_network/generated/case3/traffic_manifest.json"
+}

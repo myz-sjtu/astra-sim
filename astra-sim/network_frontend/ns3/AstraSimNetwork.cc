@@ -18,10 +18,13 @@
 #undef NS3_LOG_COMPAT_UNDEF_SYSLOG
 #include "astra-sim/network_frontend/ns3/ns3_log_monkey_patch.h"
 
+#include <chrono>
 #include <execinfo.h>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <queue>
+#include <sstream>
 #include <stdio.h>
 #include <string>
 #include <thread>
@@ -31,6 +34,73 @@
 using namespace std;
 using namespace ns3;
 using json = nlohmann::json;
+
+namespace {
+using WallClock = std::chrono::steady_clock;
+
+WallClock::time_point g_program_start_time;
+WallClock::time_point g_sim_run_start_time;
+bool g_program_timer_started = false;
+bool g_sim_run_timer_started = false;
+bool g_runtime_stats_written = false;
+
+double elapsed_seconds(WallClock::time_point start, WallClock::time_point end) {
+    return std::chrono::duration_cast<std::chrono::duration<double>>(end -
+                                                                     start)
+        .count();
+}
+
+void write_simulation_runtime_stats(const std::string& exit_reason) {
+    if (g_runtime_stats_written) {
+        return;
+    }
+    g_runtime_stats_written = true;
+
+    auto end_time = WallClock::now();
+    double setup_wall_clock_s = 0.0;
+    double run_wall_clock_s = 0.0;
+    double total_wall_clock_s = 0.0;
+
+    if (g_program_timer_started) {
+        total_wall_clock_s =
+            elapsed_seconds(g_program_start_time, end_time);
+    }
+    if (g_program_timer_started && g_sim_run_timer_started) {
+        setup_wall_clock_s =
+            elapsed_seconds(g_program_start_time, g_sim_run_start_time);
+    }
+    if (g_sim_run_timer_started) {
+        run_wall_clock_s = elapsed_seconds(g_sim_run_start_time, end_time);
+    }
+
+    int64_t sim_time_ns = Simulator::Now().GetNanoSeconds();
+
+    ostringstream runtime_log;
+    runtime_log << fixed << setprecision(6)
+                << "[AstraSimNetwork] runtime_stats: exit_reason="
+                << exit_reason << ", sim_time_ns=" << sim_time_ns
+                << ", setup_wall_clock_s=" << setup_wall_clock_s
+                << ", run_wall_clock_s=" << run_wall_clock_s
+                << ", total_wall_clock_s=" << total_wall_clock_s;
+    cout << runtime_log.str() << endl;
+
+    if (!runtime_output_file.empty()) {
+        ofstream runtime_output(runtime_output_file);
+        if (!runtime_output.is_open()) {
+            cerr << "[AstraSimNetwork] failed to open RUNTIME_OUTPUT_FILE: "
+                 << runtime_output_file << endl;
+            return;
+        }
+
+        runtime_output << "exit_reason,sim_time_ns,setup_wall_clock_s,"
+                          "run_wall_clock_s,total_wall_clock_s\n";
+        runtime_output << fixed << setprecision(9) << exit_reason << ","
+                       << sim_time_ns << "," << setup_wall_clock_s << ","
+                       << run_wall_clock_s << "," << total_wall_clock_s
+                       << "\n";
+    }
+}
+} // namespace
 
 /**
  * @class NS3BackendCompletionTracker
@@ -60,6 +130,7 @@ class NS3BackendCompletionTracker {
             AstraSim::LoggerFactory::get_logger("network")->debug(
                 "All ranks have finished. Exiting simulation.");
             // cout << "All ranks have finished. Exiting simulation.\n";
+            write_simulation_runtime_stats("all_ranks_finished");
             Simulator::Stop();
             Simulator::Destroy();
             exit(0);
@@ -272,6 +343,9 @@ void parse_args(int argc, char* argv[]) {
 }
 
 int main(int argc, char* argv[]) {
+    g_program_start_time = WallClock::now();
+    g_program_timer_started = true;
+
     LogComponentEnable("OnOffApplication", LOG_INFO);
     LogComponentEnable("PacketSink", LOG_INFO);
 
@@ -310,6 +384,10 @@ int main(int argc, char* argv[]) {
     }
 
     // Run the simulation by triggering the ns3 event queue.
+    g_sim_run_start_time = WallClock::now();
+    g_sim_run_timer_started = true;
     Simulator::Run();
+    write_simulation_runtime_stats("simulator_run_returned");
+    Simulator::Destroy();
     return 0;
 }

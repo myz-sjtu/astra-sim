@@ -42,8 +42,8 @@ RUN pip3 install --upgrade pip
 ## Add astra-sim to PYTHONPATH
 ENV PYTHONPATH="/app/astra-sim"
 
-# STG dependencies
-RUN pip3 install numpy sympy graphviz pandas
+# STG and custom-network analysis dependencies
+RUN pip3 install numpy sympy graphviz pandas matplotlib
 ### ======================================================
 
 

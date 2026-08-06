@@ -53,6 +53,7 @@ double pause_time = 5, simulator_stop_time = 3.01;
 std::string topology_file, flow_file, trace_file, trace_output_file;
 std::string fct_output_file = "fct.txt";
 std::string pfc_output_file = "pfc.txt";
+std::string runtime_output_file;
 
 double alpha_resume_interval = 55, rp_timer, ewma_gain = 1 / 16;
 double rate_decrease_interval = 4;
@@ -208,68 +209,126 @@ void get_pfc(FILE *fout, Ptr<QbbNetDevice> dev, uint32_t type) {
           dev->GetIfIndex(), type);
 }
 
-struct QlenDistribution {
-  vector<uint32_t>
-      cnt; // cnt[i] is the number of times that the queue len is i KB
+struct MonitoredSwitchPort {
+  Ptr<SwitchNode> sw;
+  Ptr<QbbNetDevice> dev;
+  uint32_t switch_id;
+  uint32_t out_dev;
+  uint32_t neighbor_node_id;
+  uint64_t link_rate_bps;
+  uint64_t last_tx_bytes;
+  uint64_t last_sample_time_ns;
+  bool has_last_sample;
 
-  void add(uint32_t qlen) {
-    uint32_t kb = qlen / 1000;
-    if (cnt.size() < kb + 1)
-      cnt.resize(kb + 1);
-    cnt[kb]++;
-  }
+  MonitoredSwitchPort()
+      : switch_id(0), out_dev(0), neighbor_node_id(0), link_rate_bps(0),
+        last_tx_bytes(0), last_sample_time_ns(0), has_last_sample(false) {}
 };
-map<uint32_t, map<uint32_t, uint32_t>> queue_result;
-void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
-  for (uint32_t i = 0; i < n->GetN(); i++) {
-    if (n->Get(i)->GetNodeType() == 1) { // is switch
-      Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(n->Get(i));
-      if (queue_result.find(i) == queue_result.end())
-        queue_result[i];
-      // fprintf(qlen_output, "\n");
-      // fprintf(qlen_output, "time: %lu\n", Simulator::Now().GetTimeStep());
-      int test = 0;
-      for (uint32_t j = 1; j < sw->GetNDevices(); j++) {
-        uint32_t size = 0;
-        for (uint32_t k = 0; k < SwitchMmu::qCnt; k++)
-          size += sw->m_mmu->egress_bytes[j][k];
-        // if (queue_result[i].find(j) == queue_result[i].end())
-        //{
-        //	vector<uint32_t> v;
-        //	queue_result[i][j] = v;
-        // }
-        if (size >= 1000) {
-          queue_result[i][j] = size; // .push_back(size);
-          if (test == 0) {
-            test = 1;
-            fprintf(qlen_output, "time %lu %u ", Simulator::Now().GetTimeStep(),
-                    i);
-          }
-          // if(j==1){
-          // fprintf(qlen_output, "t %lu %u j %u %u ",
-          // Simulator::Now().GetTimeStep(), i, j, size);
-          if (j < sw->GetNDevices() - 1) {
-            test = 2;
-            fprintf(qlen_output, "j %u %u ", j, size);
-          } else if (j == sw->GetNDevices() - 1) {
-            fprintf(qlen_output, "j %u %u\n", j, size);
-            test = 3;
-          }
-        }
-        if (j == sw->GetNDevices() - 1 && test == 2) {
-          fprintf(qlen_output, "\n");
-        }
-        // else
-        //	queue_result[i][j]+=size;
-        // queue_result[i][j].add(size);
+
+std::vector<MonitoredSwitchPort> monitored_switch_ports;
+
+const char *GetSwitchRole(uint32_t switch_id) {
+  if (leafSwitchIds.find(switch_id) != leafSwitchIds.end())
+    return "leaf";
+  if (spineSwitchIds.find(switch_id) != spineSwitchIds.end())
+    return "spine";
+  return "switch";
+}
+
+void BuildMonitoredSwitchPorts() {
+  monitored_switch_ports.clear();
+  for (const auto &src_entry : nbr2if) {
+    Ptr<Node> node = src_entry.first;
+    if (node == nullptr || node->GetNodeType() != 1)
+      continue;
+
+    Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(node);
+    if (sw == nullptr)
+      continue;
+
+    for (const auto &dst_entry : src_entry.second) {
+      Ptr<Node> neighbor = dst_entry.first;
+      if (neighbor == nullptr)
+        continue;
+
+      for (const auto &interface : dst_entry.second) {
+        if (!interface.up || interface.idx >= sw->GetNDevices())
+          continue;
+
+        Ptr<QbbNetDevice> dev =
+            DynamicCast<QbbNetDevice>(sw->GetDevice(interface.idx));
+        if (dev == nullptr)
+          continue;
+
+        MonitoredSwitchPort port;
+        port.sw = sw;
+        port.dev = dev;
+        port.switch_id = sw->GetId();
+        port.out_dev = interface.idx;
+        port.neighbor_node_id = neighbor->GetId();
+        port.link_rate_bps = dev->GetDataRate().GetBitRate();
+        monitored_switch_ports.push_back(port);
       }
-      fflush(qlen_output);
-      // fprintf(qlen_output, "\n");
     }
   }
+}
+
+void monitor_buffer(FILE *qlen_output) {
+  uint64_t now = Simulator::Now().GetTimeStep();
+  if (now > qlen_mon_end) {
+    fclose(qlen_output);
+    return;
+  }
+
+  for (auto &port : monitored_switch_ports) {
+    if (port.sw == nullptr || port.dev == nullptr || !port.dev->IsLinkUp())
+      continue;
+
+    uint64_t port_queue_bytes = 0;
+    uint32_t max_queue_index = 0;
+    uint32_t max_queue_bytes = 0;
+    for (uint32_t k = 0; k < SwitchMmu::qCnt; k++) {
+      uint32_t queue_bytes = port.sw->m_mmu->egress_bytes[port.out_dev][k];
+      port_queue_bytes += queue_bytes;
+      if (queue_bytes > max_queue_bytes) {
+        max_queue_bytes = queue_bytes;
+        max_queue_index = k;
+      }
+    }
+
+    double load_Bps = 0.0;
+    if (port.has_last_sample && now > port.last_sample_time_ns &&
+        port.dev->sendPktSize >= port.last_tx_bytes) {
+      uint64_t delta_bytes = port.dev->sendPktSize - port.last_tx_bytes;
+      uint64_t delta_time = now - port.last_sample_time_ns;
+      load_Bps = static_cast<double>(delta_bytes) *
+                 static_cast<double>(Seconds(1).GetTimeStep()) /
+                 static_cast<double>(delta_time);
+    }
+    port.last_tx_bytes = port.dev->sendPktSize;
+    port.last_sample_time_ns = now;
+    port.has_last_sample = true;
+
+    double load_ratio = port.link_rate_bps == 0
+                            ? 0.0
+                            : load_Bps * 8.0 /
+                                  static_cast<double>(port.link_rate_bps);
+
+    fprintf(qlen_output,
+            "%lu,%u,%s,%u,%u,%lu,%u,%u,%.6f,%.9f,%lu\n", now,
+            port.switch_id, GetSwitchRole(port.switch_id), port.out_dev,
+            port.neighbor_node_id, port_queue_bytes, max_queue_index,
+            max_queue_bytes, load_Bps, load_ratio, port.link_rate_bps);
+  }
+
   fflush(qlen_output);
-  Simulator::Schedule(NanoSeconds(qlen_mon_interval), &monitor_buffer,
-                      qlen_output, n);
+  uint64_t next = now + qlen_mon_interval;
+  if (next <= qlen_mon_end) {
+    Simulator::Schedule(NanoSeconds(qlen_mon_interval), &monitor_buffer,
+                        qlen_output);
+  } else {
+    fclose(qlen_output);
+  }
 }
 
 void CalculateRoute(Ptr<Node> host) {
@@ -597,6 +656,8 @@ bool ReadConf(string network_configuration) {
       conf >> nic_total_pause_time;
     } else if (key.compare("PFC_OUTPUT_FILE") == 0) {
       conf >> pfc_output_file;
+    } else if (key.compare("RUNTIME_OUTPUT_FILE") == 0) {
+      conf >> runtime_output_file;
     } else if (key.compare("LINK_DOWN") == 0) {
       conf >> link_down_time >> link_down_A >> link_down_B;
     } else if (key.compare("ENABLE_TRACE") == 0) {
@@ -1122,9 +1183,15 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
   }
 
   // schedule buffer monitor
+  BuildMonitoredSwitchPorts();
   FILE *qlen_output = fopen(qlen_mon_file.c_str(), "w");
-  Simulator::Schedule(NanoSeconds(qlen_mon_start), &monitor_buffer, qlen_output,
-                      &n);
+  NS_ASSERT_MSG(qlen_output != nullptr, "cannot open QLEN_MON_FILE");
+  fprintf(qlen_output,
+          "time_ns,switch_id,switch_role,out_dev,neighbor_node_id,"
+          "port_queue_bytes,max_queue_index,max_queue_bytes,load_Bps,"
+          "load_ratio,link_rate_bps\n");
+  Simulator::Schedule(NanoSeconds(qlen_mon_start), &monitor_buffer,
+                      qlen_output);
 
   return true;
 }

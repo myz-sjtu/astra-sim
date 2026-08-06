@@ -1,5 +1,0 @@
-0
-
-# columns:
-# first row: trace_node_count
-# following row, if any: traced node IDs

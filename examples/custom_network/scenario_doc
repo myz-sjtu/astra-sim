@@ -53,7 +53,7 @@ The supported generated pattern is `half_doubling_allreduce`:
 - `q_level`: optional ascending queue-length thresholds used to discretize local queue quality.
 - `load_level`: optional ascending byte-per-second thresholds used to discretize HPCC `calcBandwidth` quality.
 - `enable_trace`: `0` disables packet tracing, `1` enables tracing.
-- `qlen_mon_start_ns`, `qlen_mon_end_ns`, `qlen_mon_interval_ns`: queue monitor timing in ns.
+- `qlen_mon_start_ns`, `qlen_mon_end_ns`, `qlen_mon_interval_ns`: connected switch egress-port queue/load monitor timing in ns.
 - `ecn_thresholds`: per-bandwidth ECN threshold entries with `bandwidth`, `kmin`, `kmax`, and `pmax`.
 
 ## ARN-Off Packet DLB Example
@@ -84,6 +84,25 @@ The supported generated pattern is `half_doubling_allreduce`:
   ]
 }
 ```
+
+The generated `QLEN_MON_FILE` is a CSV time series with one row per sampled
+connected switch egress port. It contains raw queue and load metrics only:
+
+```text
+time_ns,switch_id,switch_role,out_dev,neighbor_node_id,port_queue_bytes,max_queue_index,max_queue_bytes,load_Bps,load_ratio,link_rate_bps
+```
+
+Use `examples/custom_network/plot_arn_port_monitor.py` to render queue and load
+line charts from this CSV.
+
+The generated `RUNTIME_OUTPUT_FILE` is written once at simulation exit:
+
+```text
+exit_reason,sim_time_ns,setup_wall_clock_s,run_wall_clock_s,total_wall_clock_s
+```
+
+Use `run_wall_clock_s` when comparing the overhead of enabled versus disabled
+queue/load monitoring.
 
 This ARN-off configuration sends flows with packet spray by default and uses
 HPCC-style packet DLB (`packet_strategy=2`): each packet chooses the equal-cost

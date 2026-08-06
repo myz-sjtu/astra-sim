@@ -9,7 +9,9 @@ rewrites path and selected runtime keys into `generated/<scenario>/network_confi
 - `TOPOLOGY_FILE`: generated physical topology file.
 - `FLOW_FILE`: generated flow override file.
 - `TRACE_FILE`: generated trace-node file.
-- `TRACE_OUTPUT_FILE`, `FCT_OUTPUT_FILE`, `PFC_OUTPUT_FILE`, `QLEN_MON_FILE`: ns-3 output paths.
+- `TRACE_OUTPUT_FILE`, `FCT_OUTPUT_FILE`, `PFC_OUTPUT_FILE`: ns-3 output paths.
+- `RUNTIME_OUTPUT_FILE`: CSV output path for wall-clock runtime statistics.
+- `QLEN_MON_FILE`: CSV output path for connected switch egress-port queue/load samples.
 
 ## Forwarding Keys
 
@@ -52,4 +54,23 @@ LOAD_LEVEL 2 0 50000000000
 - `KMIN_MAP`, `KMAX_MAP`, `PMAX_MAP`: per-link-rate ECN thresholds. Every link bandwidth in the topology must have entries.
 - `BUFFER_SIZE`: switch buffer size in MB.
 - `HEADROOM_FACTOR`: multiplier for PFC headroom calculation.
-- `QLEN_MON_START`, `QLEN_MON_END`, `QLEN_MON_INTERVAL`: queue monitor window and period in ns.
+- `QLEN_MON_START`, `QLEN_MON_END`, `QLEN_MON_INTERVAL`: queue/load monitor window and period in ns.
+
+`QLEN_MON_FILE` is written as CSV with one row per sampled connected switch
+egress port. It records raw queue and load values only:
+
+```text
+time_ns,switch_id,switch_role,out_dev,neighbor_node_id,port_queue_bytes,max_queue_index,max_queue_bytes,load_Bps,load_ratio,link_rate_bps
+```
+
+The monitor stops scheduling samples after `QLEN_MON_END` and skips down links.
+
+`RUNTIME_OUTPUT_FILE` is written once at simulation exit:
+
+```text
+exit_reason,sim_time_ns,setup_wall_clock_s,run_wall_clock_s,total_wall_clock_s
+```
+
+`setup_wall_clock_s` measures process start through `Simulator::Run()` entry,
+`run_wall_clock_s` measures the actual `Simulator::Run()` wall-clock duration,
+and `total_wall_clock_s` measures process start through simulation exit.

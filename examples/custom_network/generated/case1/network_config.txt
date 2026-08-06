@@ -10,10 +10,11 @@ PACKET_PAYLOAD_SIZE 1000
 TOPOLOGY_FILE ../../../examples/custom_network/generated/case1/topology.txt
 FLOW_FILE ../../../examples/custom_network/generated/case1/flow.txt
 TRACE_FILE ../../../examples/custom_network/generated/case1/trace.txt
-TRACE_OUTPUT_FILE scratch/output/case1/mix.tr
-FCT_OUTPUT_FILE scratch/output/case1/fct.txt
-PFC_OUTPUT_FILE scratch/output/case1/pfc.txt
-QLEN_MON_FILE scratch/output/case1/qlen.txt
+TRACE_OUTPUT_FILE scratch/output/case1_packet/mix.tr
+FCT_OUTPUT_FILE scratch/output/case1_packet/fct.txt
+PFC_OUTPUT_FILE scratch/output/case1_packet/pfc.txt
+RUNTIME_OUTPUT_FILE scratch/output/case1_packet/runtime.txt
+QLEN_MON_FILE scratch/output/case1_packet/qlen.txt
 
 QLEN_MON_START 2000000000
 QLEN_MON_END 3000000000
@@ -51,15 +52,15 @@ NIC_TOTAL_PAUSE_TIME 0
 RATE_BOUND 1
 ACK_HIGH_PRIO 1
 FLOW_STRATEGY 0
-PACKET_STRATEGY 0
+PACKET_STRATEGY 1
 ARN_PACKET_STRATEGY 1
 ARN_SCALE_SIZE 4
 DEFAULT_FWD_MODE 1
 ENABLE_ARN 0
-ARN_INTERVAL 10000
-ARN_CONGESTION_QLEN 6400
-Q_LEVEL 2 0 6400
-LOAD_LEVEL 2 0 50000000000
+ARN_INTERVAL 1000
+ARN_CONGESTION_QLEN 100000
+Q_LEVEL 8 0 100000 200000 300000 400000 500000 600000 700000
+LOAD_LEVEL 8 0 12500000000 25000000000 40000000000 41000000000 45000000000 48000000000 49000000000
 ENABLE_TRACE 0
 
 KMAX_MAP 1 400000000000 6400

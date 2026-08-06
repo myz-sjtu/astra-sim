@@ -7,4 +7,4 @@ docker build \
     --build-arg HTTPS_PROXY=http://localhost:21004 \
     --build-arg NO_PROXY=localhost,127.0.0.1,.local \
     --network host \
-    -t astra-sim:latest -f Dockerfile .
+    -t astra-sim:arn-dev -f Dockerfile .

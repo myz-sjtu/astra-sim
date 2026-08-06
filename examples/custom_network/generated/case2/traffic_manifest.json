@@ -2,7 +2,7 @@
   "pattern": "explicit_flows",
   "phase_sync": "none",
   "include_reverse": false,
-  "flow_count": 4,
+  "flow_count": 2,
   "flows": [
     {
       "phase": 0,
@@ -10,8 +10,8 @@
       "phase_flow_index": 1,
       "offset": 1,
       "direction": "explicit",
-      "src": 3,
-      "dst": 4,
+      "src": 4,
+      "dst": 3,
       "bytes": 100000000,
       "tag": 1,
       "start_time_ns": 2000000000,
@@ -23,36 +23,10 @@
       "phase_flow_index": 2,
       "offset": 1,
       "direction": "explicit",
-      "src": 4,
-      "dst": 3,
-      "bytes": 100000000,
-      "tag": 2,
-      "start_time_ns": 2000000000,
-      "fwd_mode": 0
-    },
-    {
-      "phase": 0,
-      "phase_name": "explicit",
-      "phase_flow_index": 3,
-      "offset": 1,
-      "direction": "explicit",
       "src": 5,
       "dst": 6,
       "bytes": 100000000,
-      "tag": 3,
-      "start_time_ns": 2000000000,
-      "fwd_mode": 1
-    },
-    {
-      "phase": 0,
-      "phase_name": "explicit",
-      "phase_flow_index": 4,
-      "offset": 1,
-      "direction": "explicit",
-      "src": 6,
-      "dst": 5,
-      "bytes": 100000000,
-      "tag": 4,
+      "tag": 2,
       "start_time_ns": 2000000000,
       "fwd_mode": 1
     }

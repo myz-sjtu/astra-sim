@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from collections import defaultdict, deque
 from pathlib import Path
@@ -14,7 +15,41 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NS3_ROOT = REPO_ROOT / "extern" / "network_backend" / "ns-3"
+CHAKRA_PROTO_DIR = REPO_ROOT / "extern" / "graph_frontend" / "chakra" / "schema" / "protobuf"
 sys.path.insert(0, str(REPO_ROOT))
+
+
+def ensure_chakra_python_proto() -> None:
+    generated_proto = CHAKRA_PROTO_DIR / "et_def_pb2.py"
+    if generated_proto.is_file():
+        return
+
+    proto = CHAKRA_PROTO_DIR / "et_def.proto"
+    if not proto.is_file():
+        raise RuntimeError(f"missing Chakra protobuf schema: {proto}")
+
+    try:
+        subprocess.run(
+            [
+                "protoc",
+                "et_def.proto",
+                f"--proto_path={CHAKRA_PROTO_DIR}",
+                f"--python_out={CHAKRA_PROTO_DIR}",
+            ],
+            check=True,
+        )
+    except FileNotFoundError as error:
+        raise RuntimeError(
+            "missing Chakra Python protobuf module et_def_pb2.py and protoc is "
+            "not available; run this inside the astra-sim Docker image or install protoc"
+        ) from error
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            f"failed to generate Chakra Python protobuf module from {proto}"
+        ) from error
+
+
+ensure_chakra_python_proto()
 
 from extern.graph_frontend.chakra.schema.protobuf.et_def_pb2 import (  # noqa: E402
     COMP_NODE,
@@ -758,6 +793,7 @@ def generate(
         "TRACE_OUTPUT_FILE": f"scratch/output/{name}/mix.tr",
         "FCT_OUTPUT_FILE": f"scratch/output/{name}/fct.txt",
         "PFC_OUTPUT_FILE": f"scratch/output/{name}/pfc.txt",
+        "RUNTIME_OUTPUT_FILE": f"scratch/output/{name}/runtime.txt",
         "QLEN_MON_FILE": f"scratch/output/{name}/qlen.txt",
         "QLEN_MON_START": str(network["qlen_mon_start_ns"]),
         "QLEN_MON_END": str(network["qlen_mon_end_ns"]),
@@ -819,6 +855,7 @@ def generate(
         "logical_topology_configuration": ns3_relative(logical_topology_path),
         "comm_group_configuration": "empty",
         "fct_output": f"scratch/output/{name}/fct.txt",
+        "runtime_output": f"scratch/output/{name}/runtime.txt",
         "output_directory": f"scratch/output/{name}",
         "annotation_command": (
             f"python3 {ns3_relative(REPO_ROOT / 'examples' / 'custom_network' / 'annotate_output_files.py')} "
