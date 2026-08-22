@@ -763,8 +763,11 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
     packet_strategy = require_int(
         network.get("packet_strategy", 0), "network.packet_strategy"
     )
-    if packet_strategy != 0:
-        raise ScenarioError("network.packet_strategy currently supports only 0=RR")
+    if packet_strategy not in (0, 1):
+        raise ScenarioError(
+            "network.packet_strategy must be 0=RR or 1=Random "
+            "for packet-spray fwd_mode=1 traffic"
+        )
 
     enable_trace = require_int(network.get("enable_trace", 0), "network.enable_trace")
     if enable_trace not in (0, 1):
@@ -1148,6 +1151,7 @@ def generate(
         "TRACE_FILE": ns3_relative(trace_path),
         "TRACE_OUTPUT_FILE": f"scratch/output/{name}/mix.tr",
         "FCT_OUTPUT_FILE": f"scratch/output/{name}/fct.txt",
+        "REORDER_OUTPUT_FILE": f"scratch/output/{name}/reorder_stats.txt",
         "PFC_OUTPUT_FILE": f"scratch/output/{name}/pfc.txt",
         "DROP_LOG_FILE": f"scratch/output/{name}/drop-log.txt",
         "QLEN_MON_FILE": f"scratch/output/{name}/qlen.txt",
@@ -1200,6 +1204,7 @@ def generate(
         "logical_topology_configuration": ns3_relative(logical_topology_path),
         "comm_group_configuration": "empty",
         "fct_output": f"scratch/output/{name}/fct.txt",
+        "reorder_output": f"scratch/output/{name}/reorder_stats.txt",
         "output_directory": f"scratch/output/{name}",
         "annotation_command": (
             f"python3 {ns3_relative(REPO_ROOT / 'examples' / 'custom_network' / 'annotate_output_files.py')} "
@@ -1226,6 +1231,7 @@ def print_run_command(manifest: dict[str, Any]) -> None:
     print(f"Run from {NS3_ROOT}:")
     print('./ns3 run "AstraSimNetwork ' + " ".join(args) + '"')
     print(f"FCT output: {NS3_ROOT / manifest['fct_output']}")
+    print(f"Reorder stats output: {NS3_ROOT / manifest['reorder_output']}")
     print("Annotate text outputs after the run:")
     print(manifest["annotation_command"])
 

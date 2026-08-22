@@ -58,6 +58,7 @@ double pause_time = 5, simulator_stop_time = 3.01;
 double wait_ack_timeout = 1000000.0; // local ACK timeout in microseconds
 std::string topology_file, flow_file, trace_file, trace_output_file;
 std::string fct_output_file = "fct.txt";
+std::string reorder_output_file;
 std::string pfc_output_file = "pfc.txt";
 std::string drop_log_file = "drop.txt";
 
@@ -66,6 +67,11 @@ double rate_decrease_interval = 4;
 uint32_t fast_recovery_times = 5;
 std::string rate_ai, rate_hai, min_rate = "100Mb/s";
 std::string dctcp_rate_ai = "1000Mb/s";
+double timely_alpha = 0.875;
+double timely_beta = 0.8;
+uint64_t timely_tlow = 50000;
+uint64_t timely_thigh = 500000;
+uint64_t timely_min_rtt = 20000;
 
 bool clamp_target_rate = false, l2_back_to_zero = false;
 double error_rate_per_link = 0.0;
@@ -85,7 +91,7 @@ int nic_total_pause_time =
 
 uint32_t ack_high_prio = 0;
 uint32_t flow_strategy = 0;  // Flow-based forwarding strategy: 0=ECMP, 1=PathPinning
-uint32_t packet_strategy = 0; // Packet-based forwarding strategy: 0=RR
+uint32_t packet_strategy = 0; // Packet-based forwarding strategy: 0=RR, 1=Random
 uint8_t default_fwd_mode = 0; // Default forwarding mode for all flows: 0=flow-based, 1=packet spray
 
 struct LinkDownInfo {
@@ -734,6 +740,16 @@ bool ReadConf(string network_configuration) {
       std::string v;
       conf >> v;
       rate_hai = v;
+    } else if (key.compare("TIMELY_ALPHA") == 0) {
+      conf >> timely_alpha;
+    } else if (key.compare("TIMELY_BETA") == 0) {
+      conf >> timely_beta;
+    } else if (key.compare("TIMELY_TLOW") == 0) {
+      conf >> timely_tlow;
+    } else if (key.compare("TIMELY_THIGH") == 0) {
+      conf >> timely_thigh;
+    } else if (key.compare("TIMELY_MIN_RTT") == 0) {
+      conf >> timely_min_rtt;
     } else if (key.compare("ERROR_RATE_PER_LINK") == 0) {
       double v;
       conf >> v;
@@ -748,6 +764,8 @@ bool ReadConf(string network_configuration) {
       conf >> min_rate;
     } else if (key.compare("FCT_OUTPUT_FILE") == 0) {
       conf >> fct_output_file;
+    } else if (key.compare("REORDER_OUTPUT_FILE") == 0) {
+      conf >> reorder_output_file;
     } else if (key.compare("HAS_WIN") == 0) {
       conf >> has_win;
     } else if (key.compare("GLOBAL_T") == 0) {
@@ -884,6 +902,8 @@ bool ReadConf(string network_configuration) {
   conf.close();
   if (drop_log_file.empty())
     drop_log_file = GetSiblingOutputFile(fct_output_file, "drop-log.txt");
+  if (reorder_output_file.empty())
+    reorder_output_file = GetSiblingOutputFile(fct_output_file, "reorder_stats.txt");
   return true;
 }
 
@@ -1204,6 +1224,11 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
       rdmaHw->SetAttribute("EwmaGain", DoubleValue(ewma_gain));
       rdmaHw->SetAttribute("RateAI", DataRateValue(DataRate(rate_ai)));
       rdmaHw->SetAttribute("RateHAI", DataRateValue(DataRate(rate_hai)));
+      rdmaHw->SetAttribute("TimelyAlpha", DoubleValue(timely_alpha));
+      rdmaHw->SetAttribute("TimelyBeta", DoubleValue(timely_beta));
+      rdmaHw->SetAttribute("TimelyTLow", UintegerValue(timely_tlow));
+      rdmaHw->SetAttribute("TimelyTHigh", UintegerValue(timely_thigh));
+      rdmaHw->SetAttribute("TimelyMinRtt", UintegerValue(timely_min_rtt));
       rdmaHw->SetAttribute("L2BackToZero", BooleanValue(l2_back_to_zero));
       rdmaHw->SetAttribute("L2ChunkSize", UintegerValue(l2_chunk_size));
       rdmaHw->SetAttribute("L2AckInterval", UintegerValue(l2_ack_interval));

@@ -11,6 +11,7 @@ FLOW_FILE ../../../examples/custom_network/generated/<name>/flow.txt {input flow
 TRACE_FILE ../../../examples/custom_network/generated/<name>/trace.txt {input list of node IDs for packet-level tracing}
 TRACE_OUTPUT_FILE scratch/output/<name>/mix.tr {output packet-level trace file}
 FCT_OUTPUT_FILE scratch/output/<name>/fct.txt {output flow completion time file}
+REORDER_OUTPUT_FILE scratch/output/<name>/reorder_stats.txt {output per-flow packet reordering statistics file}
 PFC_OUTPUT_FILE scratch/output/<name>/pfc.txt {output PFC event file}
 DROP_LOG_FILE scratch/output/<name>/drop-log.txt {output per-switch packet drop count file}
 QLEN_MON_FILE scratch/output/<name>/qlen.txt {output queue length monitor file}
@@ -32,6 +33,11 @@ RATE_AI 50Mb/s {additive increase rate}
 RATE_HAI 100Mb/s {hyper additive increase rate}
 MIN_RATE 100Mb/s {minimum allowed throttled rate}
 DCTCP_RATE_AI 1000Mb/s {DCTCP additive increase rate}
+TIMELY_ALPHA 0.875 {TIMELY RTT-difference EWMA weight}
+TIMELY_BETA 0.8 {TIMELY multiplicative decrease strength}
+TIMELY_MIN_RTT 20000 {TIMELY base/min RTT in nanoseconds}
+TIMELY_TLOW 50000 {TIMELY low RTT threshold in nanoseconds}
+TIMELY_THIGH 500000 {TIMELY high RTT threshold in nanoseconds}
 
 ERROR_RATE_PER_LINK 0.0000 {default per-link packet error rate; per-topology link row can override with its own error_rate}
 L2_CHUNK_SIZE 4000 {layer-2 chunk size; 0 disables chunk mode}
@@ -56,7 +62,7 @@ RATE_BOUND 1 {0: no rate limiter, 1: enable rate limiter}
 ACK_HIGH_PRIO 0 {0: ACK shares data priority, 1: ACK uses high priority queue}
 
 FLOW_STRATEGY 1 {flow-based switch forwarding: 0 ECMP, 1 PathPinning}
-PACKET_STRATEGY 0 {packet-based switch forwarding: 0 round-robin packet spray}
+PACKET_STRATEGY 0 {packet-based switch forwarding: 0 round-robin packet spray, 1 random packet spray}
 DEFAULT_FWD_MODE 0 {default per-flow forwarding mode: 0 flow-based forwarding, 1 packet-spray forwarding}
 
 LINK_DOWN 0 {no link failures}
@@ -92,7 +98,7 @@ TOPOLOGY_FORMAT_LEGACY
 
 NOTES
 Config files under examples/custom_network/config_hpcc_case*.txt are base templates.
-generate_custom_inputs.py rewrites TOPOLOGY_FILE, FLOW_FILE, TRACE_FILE, output paths, FLOW_STRATEGY, DEFAULT_FWD_MODE, monitor times, and ECN maps into generated/<name>/network_config.txt.
+generate_custom_inputs.py rewrites TOPOLOGY_FILE, FLOW_FILE, TRACE_FILE, FCT_OUTPUT_FILE, REORDER_OUTPUT_FILE, other output paths, FLOW_STRATEGY, DEFAULT_FWD_MODE, monitor times, and ECN maps into generated/<name>/network_config.txt.
 scenario.network.config_overrides can rewrite raw config keys such as ENABLE_PFC, ENABLE_QCN, ENABLE_RTO, WAIT_ACK_TIMEOUT, CC_MODE, ACK_HIGH_PRIO, and USE_DYNAMIC_PFC_THRESHOLD.
 Use FLOW_STRATEGY 1 with DEFAULT_FWD_MODE 0 to exercise HPCC-Dev-style path pinning.
-Use DEFAULT_FWD_MODE 1 to exercise packet spray; packet spray uses PACKET_STRATEGY.
+Use DEFAULT_FWD_MODE 1 to exercise packet spray; packet spray uses PACKET_STRATEGY 0=round-robin or 1=random.

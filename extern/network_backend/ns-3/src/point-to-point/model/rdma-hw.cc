@@ -12,6 +12,7 @@
 #include "ppp-header.h"
 #include "qbb-header.h"
 #include "cn-header.h"
+#include <algorithm>
 
 namespace ns3{
 
@@ -537,23 +538,60 @@ int RdmaHw::Receive(Ptr<Packet> p, CustomHeader &ch){
 
 int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size){
     uint32_t expected = q->ReceiverNextExpectedSeq;
+    uint64_t now = Simulator::Now().GetNanoSeconds();
+
+    q->m_totalDataPackets++;
+    q->m_totalPayloadBytes += size;
+
+    bool duplicate = seq < expected || (q->m_oooEnabled && q->m_oooReceived.count(seq));
+    if (duplicate) {
+        q->m_duplicatePacketCount++;
+        return 3;
+    }
+
+    if (q->m_hasSeenSeq && seq < q->m_maxSeenSeq) {
+        q->m_latePacketCount++;
+    }
+    if (!q->m_hasSeenSeq || seq > q->m_maxSeenSeq) {
+        q->m_maxSeenSeq = seq;
+        q->m_hasSeenSeq = true;
+    }
+
+    if (seq > expected) {
+        uint32_t distanceBytes = seq - expected;
+        uint32_t payloadUnit = m_mtu == 0 ? 1 : m_mtu;
+        uint32_t distancePackets = (distanceBytes + payloadUnit - 1) / payloadUnit;
+        q->m_oooPacketCount++;
+        q->m_reorderDistancePacketSum += distancePackets;
+        q->m_maxReorderDistancePackets = std::max(q->m_maxReorderDistancePackets, distancePackets);
+        q->m_maxReorderDistanceBytes = std::max(q->m_maxReorderDistanceBytes, distanceBytes);
+    }
 
     // Out-of-order mode (for packet spray)
     if (q->m_oooEnabled) {
-        // Already received this packet?
-        if (seq < expected || q->m_oooReceived.count(seq))
-            return 3; // Duplicate
-
-        // Cache the received packet
-        q->m_oooReceived[seq] = size;
-
-        // Advance expected through contiguous cached packets
-        while (q->m_oooReceived.count(expected)) {
-            expected += q->m_oooReceived[expected];
-            q->m_oooReceived.erase(expected - size); // erase by key
-            // Note: after erase, expected already points to next expected
+        if (seq > expected) {
+            q->m_oooReceived[seq] = {size, now};
+            q->m_currentOooBufferBytes += size;
+            q->m_peakOooBufferPackets = std::max(
+                q->m_peakOooBufferPackets,
+                static_cast<uint32_t>(q->m_oooReceived.size()));
+            q->m_peakOooBufferBytes = std::max(q->m_peakOooBufferBytes,
+                                               q->m_currentOooBufferBytes);
+        } else {
+            expected += size;
+            while (q->m_oooReceived.count(expected)) {
+                uint32_t cachedSeq = expected;
+                RdmaRxQueuePair::OooPacketInfo cached = q->m_oooReceived[cachedSeq];
+                expected += cached.size;
+                q->m_currentOooBufferBytes -= cached.size;
+                uint64_t waitNs = now >= cached.arrivalTimeNs ? now - cached.arrivalTimeNs : 0;
+                q->m_oooWaitEvents++;
+                q->m_oooWaitTimeNsSum += waitNs;
+                q->m_maxOooWaitNs = std::max(q->m_maxOooWaitNs, waitNs);
+                q->m_oooReceived.erase(cachedSeq);
+            }
+            q->ReceiverNextExpectedSeq = expected;
         }
-        q->ReceiverNextExpectedSeq = expected;
 
         if (q->ReceiverNextExpectedSeq >= q->m_milestone_rx) {
             q->m_milestone_rx += m_ack_interval;

@@ -8,6 +8,7 @@
   "logical_topology_configuration": "../../../examples/custom_network/generated/2dc_64_clos/logical_topology.json",
   "comm_group_configuration": "empty",
   "fct_output": "scratch/output/2dc_64_clos/fct.txt",
+  "reorder_output": "scratch/output/2dc_64_clos/reorder_stats.txt",
   "output_directory": "scratch/output/2dc_64_clos",
   "annotation_command": "python3 ../../../examples/custom_network/annotate_output_files.py --output-dir scratch/output/2dc_64_clos",
   "traffic_manifest": "../../../examples/custom_network/generated/2dc_64_clos/traffic_manifest.json"

@@ -1,5 +1,5 @@
 {
-  "name": "2dc_64_hd_allreduce",
+  "name": "hd_packet_rr",
   "num_npus": 64,
   "workload_configuration": "../../../examples/custom_network/generated/2dc_64_hd_allreduce/workload/custom_traffic",
   "system_configuration": "../../../examples/system/native_collectives/Ring_4chunks.json",
@@ -7,8 +7,9 @@
   "remote_memory_configuration": "../../../examples/remote_memory/analytical/no_memory_expansion.json",
   "logical_topology_configuration": "../../../examples/custom_network/generated/2dc_64_hd_allreduce/logical_topology.json",
   "comm_group_configuration": "empty",
-  "fct_output": "scratch/output/2dc_64_hd_allreduce/fct.txt",
-  "output_directory": "scratch/output/2dc_64_hd_allreduce",
-  "annotation_command": "python3 ../../../examples/custom_network/annotate_output_files.py --output-dir scratch/output/2dc_64_hd_allreduce",
+  "fct_output": "scratch/output/hd_packet_rr/fct.txt",
+  "reorder_output": "scratch/output/hd_packet_rr/reorder_stats.txt",
+  "output_directory": "scratch/output/hd_packet_rr",
+  "annotation_command": "python3 ../../../examples/custom_network/annotate_output_files.py --output-dir scratch/output/hd_packet_rr",
   "traffic_manifest": "../../../examples/custom_network/generated/2dc_64_hd_allreduce/traffic_manifest.json"
 }

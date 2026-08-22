@@ -8,11 +8,12 @@ PACKET_PAYLOAD_SIZE 1000
 TOPOLOGY_FILE ../../../examples/custom_network/generated/2dc_64_hd_allreduce/topology.txt
 FLOW_FILE ../../../examples/custom_network/generated/2dc_64_hd_allreduce/flow.txt
 TRACE_FILE ../../../examples/custom_network/generated/2dc_64_hd_allreduce/trace.txt
-TRACE_OUTPUT_FILE scratch/output/2dc_64_hd_allreduce/mix.tr
-FCT_OUTPUT_FILE scratch/output/2dc_64_hd_allreduce/fct.txt
-PFC_OUTPUT_FILE scratch/output/2dc_64_hd_allreduce/pfc.txt
-DROP_LOG_FILE scratch/output/2dc_64_hd_allreduce/drop-log.txt
-QLEN_MON_FILE scratch/output/2dc_64_hd_allreduce/qlen.txt
+TRACE_OUTPUT_FILE scratch/output/hd_packet_rr/mix.tr
+FCT_OUTPUT_FILE scratch/output/hd_packet_rr/fct.txt
+PFC_OUTPUT_FILE scratch/output/hd_packet_rr/pfc.txt
+DROP_LOG_FILE scratch/output/hd_packet_rr/drop-log.txt
+QLEN_MON_FILE scratch/output/hd_packet_rr/qlen.txt
+REORDER_OUTPUT_FILE scratch/output/hd_packet_rr/reorder_stats.txt
 QLEN_MON_START 2000000000
 QLEN_MON_END 3000000000
 QLEN_MON_INTERVAL 100000
@@ -57,11 +58,9 @@ ACK_HIGH_PRIO 1
 
 FLOW_STRATEGY 1
 PACKET_STRATEGY 0
-DEFAULT_FWD_MODE 0
+DEFAULT_FWD_MODE 1
 
-LINK_DOWN
-1
-0 67 69 8
+LINK_DOWN 0
 
 ENABLE_TRACE 0
 

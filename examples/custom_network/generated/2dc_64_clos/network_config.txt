@@ -13,6 +13,7 @@ FCT_OUTPUT_FILE scratch/output/2dc_64_clos/fct.txt
 PFC_OUTPUT_FILE scratch/output/2dc_64_clos/pfc.txt
 DROP_LOG_FILE scratch/output/2dc_64_clos/drop-log.txt
 QLEN_MON_FILE scratch/output/2dc_64_clos/qlen.txt
+REORDER_OUTPUT_FILE scratch/output/2dc_64_clos/reorder_stats.txt
 QLEN_MON_START 2000000000
 QLEN_MON_END 3000000000
 QLEN_MON_INTERVAL 100000

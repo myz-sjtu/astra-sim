@@ -79,7 +79,7 @@
     "flow_strategy": 1,
     "_flow_strategy": "Flow-based switch strategy. 0 ECMP, 1 PathPinning. Use 1 for HPCC-Dev long-distance path pinning.",
     "packet_strategy": 0,
-    "_packet_strategy": "Packet-based switch strategy. Currently only 0 round-robin packet spray is supported.",
+    "_packet_strategy": "Packet-based switch strategy used when fwd_mode=1. 0 round-robin packet spray, 1 random packet spray.",
     "enable_trace": 0,
     "_enable_trace": "0 disables packet-level tracing; 1 enables tracing for nodes in generated trace.txt.",
     "qlen_mon_start_ns": 2000000000,

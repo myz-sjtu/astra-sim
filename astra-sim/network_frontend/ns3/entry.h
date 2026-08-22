@@ -121,7 +121,7 @@ map<MsgEventKey, MsgEvent> sim_recv_waiting_hash;
 map<MsgEventKey, int> received_msg_standby_hash;
 
 const char *fwd_mode_name(uint8_t fwd_mode) {
-  return fwd_mode == 1 ? "packet-spray-rr" : "flow-based";
+  return fwd_mode == 1 ? "packet-spray" : "flow-based";
 }
 
 const char *flow_strategy_name(uint32_t strategy) {
@@ -298,6 +298,69 @@ void qp_finish_print_log(FILE *fout, Ptr<RdmaQueuePair> q) {
   fflush(fout);
 }
 
+FILE *get_reorder_output_file() {
+  static FILE *fout = nullptr;
+  if (fout != nullptr) {
+    return fout;
+  }
+
+  fout = fopen(reorder_output_file.c_str(), "w");
+  if (fout == nullptr) {
+    cerr << "Cannot open reorder stats output file: " << reorder_output_file
+         << endl;
+    return nullptr;
+  }
+
+  fprintf(fout, "# columns:\n");
+  fprintf(fout, "# sip_hex dip_hex src_id dst_id tag sport dport pg fwd_mode total_data_packets total_payload_bytes ooo_packet_count ooo_ratio late_packet_count late_ratio duplicate_packet_count avg_reorder_distance_packets max_reorder_distance_packets max_reorder_distance_bytes peak_ooo_buffer_packets peak_ooo_buffer_bytes ooo_wait_events avg_ooo_wait_ns max_ooo_wait_ns\n");
+  fprintf(fout, "# ooo_packet_count counts packets arriving with seq > ReceiverNextExpectedSeq at arrival time.\n");
+  fprintf(fout, "# late_packet_count counts non-duplicate packets arriving after a higher sequence number was already seen.\n");
+  fprintf(fout, "# duplicate_packet_count counts packets already delivered or already cached in the OOO buffer.\n");
+  fprintf(fout, "# reorder distance is measured from seq - ReceiverNextExpectedSeq and converted to packets with PACKET_PAYLOAD_SIZE.\n");
+  fprintf(fout, "# OOO wait is measured from early packet arrival until the contiguous receive prefix releases it.\n");
+  fflush(fout);
+  return fout;
+}
+
+void qp_finish_print_reorder_stats(Ptr<RdmaQueuePair> q,
+                                   Ptr<RdmaRxQueuePair> rxQp,
+                                   uint64_t tag) {
+  FILE *fout = get_reorder_output_file();
+  if (fout == nullptr) {
+    return;
+  }
+
+  uint32_t sid = ip_to_node_id(q->sip), did = ip_to_node_id(q->dip);
+  uint64_t totalDataPackets = rxQp == nullptr ? 0 : rxQp->m_totalDataPackets;
+  uint64_t totalPayloadBytes = rxQp == nullptr ? 0 : rxQp->m_totalPayloadBytes;
+  uint64_t oooPacketCount = rxQp == nullptr ? 0 : rxQp->m_oooPacketCount;
+  uint64_t latePacketCount = rxQp == nullptr ? 0 : rxQp->m_latePacketCount;
+  uint64_t duplicatePacketCount = rxQp == nullptr ? 0 : rxQp->m_duplicatePacketCount;
+  uint64_t oooWaitEvents = rxQp == nullptr ? 0 : rxQp->m_oooWaitEvents;
+  double oooRatio = totalDataPackets == 0 ? 0.0 : static_cast<double>(oooPacketCount) / totalDataPackets;
+  double lateRatio = totalDataPackets == 0 ? 0.0 : static_cast<double>(latePacketCount) / totalDataPackets;
+  double avgReorderDistancePackets =
+      oooPacketCount == 0 ? 0.0 : static_cast<double>(rxQp->m_reorderDistancePacketSum) / oooPacketCount;
+  double avgOooWaitNs =
+      oooWaitEvents == 0 ? 0.0 : static_cast<double>(rxQp->m_oooWaitTimeNsSum) / oooWaitEvents;
+  uint32_t maxReorderDistancePackets = rxQp == nullptr ? 0 : rxQp->m_maxReorderDistancePackets;
+  uint32_t maxReorderDistanceBytes = rxQp == nullptr ? 0 : rxQp->m_maxReorderDistanceBytes;
+  uint32_t peakOooBufferPackets = rxQp == nullptr ? 0 : rxQp->m_peakOooBufferPackets;
+  uint64_t peakOooBufferBytes = rxQp == nullptr ? 0 : rxQp->m_peakOooBufferBytes;
+  uint64_t maxOooWaitNs = rxQp == nullptr ? 0 : rxQp->m_maxOooWaitNs;
+
+  fprintf(fout,
+          "%08x %08x %u %u %lu %u %u %u %u %lu %lu %lu %.8lf %lu %.8lf %lu %.8lf %u %u %u %lu %lu %.8lf %lu\n",
+          q->sip.Get(), q->dip.Get(), sid, did, tag, q->sport, q->dport,
+          q->m_pg, static_cast<uint32_t>(q->m_fwd_mode), totalDataPackets,
+          totalPayloadBytes, oooPacketCount, oooRatio, latePacketCount,
+          lateRatio, duplicatePacketCount, avgReorderDistancePackets,
+          maxReorderDistancePackets, maxReorderDistanceBytes,
+          peakOooBufferPackets, peakOooBufferBytes, oooWaitEvents,
+          avgOooWaitNs, maxOooWaitNs);
+  fflush(fout);
+}
+
 // qp_finish is triggered by NS3 to indicate that an RDMA queue pair has
 // finished. qp_finish is registered as the callback handlerto the RdmaClient
 // instance created at send_flow. This registration is done at
@@ -309,6 +372,9 @@ void qp_finish(FILE *fout, Ptr<RdmaQueuePair> q) {
   // remove rxQp from the receiver.
   Ptr<Node> dstNode = n.Get(did);
   Ptr<RdmaDriver> rdma = dstNode->GetObject<RdmaDriver>();
+  Ptr<RdmaRxQueuePair> rxQp = rdma->m_rdma->GetRxQp(
+      q->dip.Get(), q->sip.Get(), q->dport, q->sport, q->m_pg, false);
+  qp_finish_print_reorder_stats(q, rxQp, q->GetTag());
   rdma->m_rdma->DeleteRxQp(q->sip.Get(), q->m_pg, q->sport);
 
   // Identify the tag of this message.

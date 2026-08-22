@@ -137,9 +137,30 @@ public:
 	uint32_t m_lastNACK;
 	EventId QcnTimerEvent; // if destroy this rxQp, remember to cancel this timer
 
-	// Out-of-order reception support (for packet spray)
-	bool m_oooEnabled;                                    //!< Enable out-of-order reception
-	std::unordered_map<uint32_t, uint32_t> m_oooReceived; //!< Cached OOO packets: seq → size
+	struct OooPacketInfo {
+		uint32_t size;
+		uint64_t arrivalTimeNs;
+	};
+
+	// Out-of-order reception support and statistics for packet spray.
+	bool m_oooEnabled; //!< Enable out-of-order reception
+	std::unordered_map<uint32_t, OooPacketInfo> m_oooReceived; //!< Cached OOO packets: seq -> metadata
+	bool m_hasSeenSeq;
+	uint32_t m_maxSeenSeq;
+	uint64_t m_totalDataPackets;
+	uint64_t m_totalPayloadBytes;
+	uint64_t m_oooPacketCount;
+	uint64_t m_latePacketCount;
+	uint64_t m_duplicatePacketCount;
+	uint64_t m_reorderDistancePacketSum;
+	uint32_t m_maxReorderDistancePackets;
+	uint32_t m_maxReorderDistanceBytes;
+	uint32_t m_peakOooBufferPackets;
+	uint64_t m_currentOooBufferBytes;
+	uint64_t m_peakOooBufferBytes;
+	uint64_t m_oooWaitEvents;
+	uint64_t m_oooWaitTimeNsSum;
+	uint64_t m_maxOooWaitNs;
 
 	static TypeId GetTypeId (void);
 	RdmaRxQueuePair();

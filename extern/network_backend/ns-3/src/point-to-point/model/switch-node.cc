@@ -46,7 +46,7 @@ TypeId SwitchNode::GetTypeId (void)
 			MakeUintegerAccessor(&SwitchNode::m_flowStrategy),
 			MakeUintegerChecker<uint32_t>())
 	.AddAttribute("PacketStrategy",
-			"Packet-based forwarding strategy (0=RoundRobin)",
+			"Packet-based forwarding strategy (0=RoundRobin, 1=Random)",
 			UintegerValue(0),
 			MakeUintegerAccessor(&SwitchNode::m_packetStrategy),
 			MakeUintegerChecker<uint32_t>())
@@ -70,6 +70,7 @@ SwitchNode::SwitchNode(){
 		m_u[i] = 0;
 	for (uint32_t i = 0; i < pCnt; i++)
 		m_rrCounter[i] = 0;
+	m_pktSprayRandom = CreateObject<UniformRandomVariable>();
 	m_flowStrategy = 0;
 	m_packetStrategy = 0;
 	m_dropCnt = 0;
@@ -80,6 +81,8 @@ int SwitchNode::GetOutDev(Ptr<const Packet> p, CustomHeader &ch){
 	if (ch.l3Prot == 0x11 && ch.udp.fwd_mode == 1) {
 		// Packet spray mode
 		switch (m_packetStrategy) {
+			case PKT_STRATEGY_RANDOM:
+				return GetOutDevPktSprayRandom(p, ch);
 			case PKT_STRATEGY_RR:
 			default:
 				return GetOutDevPktSprayRR(p, ch);
@@ -144,7 +147,8 @@ int SwitchNode::GetOutDevPathPinning(Ptr<const Packet> p, CustomHeader &ch){
 
 	if (n == 1)
 		return nexthops[0];
-
+	// In fact, modulo window should be n, rather than max(n,8). Existing implementation could lead to unfairness when muti-link breaks down.
+	// Keep it unchanged to be consistent with former result and collision pattern.
 	static const int kPathPinningModuloMinWindow = 8;
 	int moduloWindow = n > kPathPinningModuloMinWindow ? n : kPathPinningModuloMinWindow;
 	int idx = (GetInDev(p) - 1) % moduloWindow;
@@ -170,12 +174,33 @@ int SwitchNode::GetOutDevPktSprayRR(Ptr<const Packet> p, CustomHeader &ch){
 
 	// entry found
 	auto &nexthops = entry->second;
+	if (nexthops.empty())
+		return -1;
 
 	uint32_t inDev = GetInDev(p);
 
 	// round-robin among nexthops
 	uint32_t idx = m_rrCounter[inDev] % nexthops.size();
 	m_rrCounter[inDev]++;
+	return nexthops[idx];
+}
+
+int SwitchNode::GetOutDevPktSprayRandom(Ptr<const Packet> p, CustomHeader &ch){
+	(void)p;
+
+	// look up entries
+	auto entry = m_rtTable.find(ch.dip);
+
+	// no matching entry
+	if (entry == m_rtTable.end())
+		return -1;
+
+	// entry found
+	auto &nexthops = entry->second;
+	if (nexthops.empty())
+		return -1;
+
+	uint32_t idx = m_pktSprayRandom->GetInteger(0, static_cast<uint32_t>(nexthops.size() - 1));
 	return nexthops[idx];
 }
 

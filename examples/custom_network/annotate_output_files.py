@@ -13,6 +13,15 @@ NOTES = {
         "# standalone_fct_ns is based on pairRtt + wire_bytes / pairBw.",
         "# throughput_gbps is wire_bytes * 8 / fct_ns.",
     ],
+    "reorder_stats.txt": [
+        "# columns:",
+        "# sip_hex dip_hex src_id dst_id tag sport dport pg fwd_mode total_data_packets total_payload_bytes ooo_packet_count ooo_ratio late_packet_count late_ratio duplicate_packet_count avg_reorder_distance_packets max_reorder_distance_packets max_reorder_distance_bytes peak_ooo_buffer_packets peak_ooo_buffer_bytes ooo_wait_events avg_ooo_wait_ns max_ooo_wait_ns",
+        "# ooo_packet_count counts packets arriving with seq > ReceiverNextExpectedSeq at arrival time.",
+        "# late_packet_count counts non-duplicate packets arriving after a higher sequence number was already seen.",
+        "# duplicate_packet_count counts packets already delivered or already cached in the OOO buffer.",
+        "# reorder distance is measured from seq - ReceiverNextExpectedSeq and converted to packets with PACKET_PAYLOAD_SIZE.",
+        "# OOO wait is measured from early packet arrival until the contiguous receive prefix releases it.",
+    ],
     "pfc.txt": [
         "# columns:",
         "# time_ns node_id node_type if_index type",

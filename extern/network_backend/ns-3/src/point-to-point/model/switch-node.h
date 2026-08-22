@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <ns3/custom-header.h>
 #include <ns3/node.h>
+#include <ns3/random-variable-stream.h>
 #include "qbb-net-device.h"
 #include "switch-mmu.h"
 #include "pint.h"
@@ -16,7 +17,7 @@ class SwitchNode : public Node{
 public:
 	// Forwarding strategy enums
 	enum FlowStrategy { FLOW_STRATEGY_ECMP = 0, FLOW_STRATEGY_PATH_PINNING = 1 };
-	enum PacketStrategy { PKT_STRATEGY_RR = 0 };
+	enum PacketStrategy { PKT_STRATEGY_RR = 0, PKT_STRATEGY_RANDOM = 1 };
 
 	static const uint32_t pCnt = 1025;	// Number of ports used
 	static const uint32_t qCnt = 8;	// Number of queues/priorities used
@@ -34,6 +35,7 @@ public:
 
 	// Packet spray round-robin counter per ingress port
 	uint32_t m_rrCounter[pCnt];
+	Ptr<UniformRandomVariable> m_pktSprayRandom;
 
 	uint64_t m_dropCnt;
 
@@ -53,6 +55,7 @@ private:
 	int GetOutDevFlowECMP(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevPathPinning(Ptr<const Packet>, CustomHeader &ch);
 	int GetOutDevPktSprayRR(Ptr<const Packet>, CustomHeader &ch);
+	int GetOutDevPktSprayRandom(Ptr<const Packet>, CustomHeader &ch);
 	int GetInDev(Ptr<const Packet> p);
 	void SendToDev(Ptr<Packet>p, CustomHeader &ch);
 	static uint32_t EcmpHash(const uint8_t* key, size_t len, uint32_t seed);
