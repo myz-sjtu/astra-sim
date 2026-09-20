@@ -245,6 +245,10 @@ namespace ns3 {
 		}
 
 		m_rdmaEQ = CreateObject<RdmaEgressQueue>();
+		sendPktSize = 0;
+		lastSendPktSize = 0;
+		calcBandwidth = 0;
+		last_ts = 0;
 	}
 
 	QbbNetDevice::~QbbNetDevice()
@@ -461,6 +465,47 @@ namespace ns3 {
 		SwitchSend(0, p, ch);
 	}
 
+	void QbbNetDevice::SendArn(uint32_t qIndex, ArnHeader::FlowKey flowKey,
+							ArnHeader::FlowInfo flowInfo, CustomHeader &oldCh){
+		Ptr<Packet> p = Create<Packet>(0);
+		p->AddHeader(ArnHeader(flowKey, flowInfo));
+		Ipv4Header ipv4h;
+		ipv4h.SetProtocol(0xFA);
+		ipv4h.SetSource(Ipv4Address(oldCh.dip));
+		ipv4h.SetDestination(Ipv4Address(oldCh.sip));
+		ipv4h.SetPayloadSize(p->GetSize());
+		ipv4h.SetTtl(1);
+		Ptr<UniformRandomVariable> rng = CreateObject<UniformRandomVariable>();
+		rng->SetAttribute("Min", DoubleValue(0));
+		rng->SetAttribute("Max", DoubleValue(65536));
+		ipv4h.SetIdentification(rng->GetValue());
+		p->AddHeader(ipv4h);
+		AddHeader(p, 0x800);
+		CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+		p->PeekHeader(ch);
+		SwitchSend(qIndex, p, ch);
+	}
+
+	Ptr<Packet> QbbNetDevice::ArnHeaderProcess(ArnHeader::FlowKey flowKey,
+											ArnHeader::FlowInfo flowInfo, CustomHeader &ch){
+		Ptr<Packet> p = Create<Packet>(0);
+		p->AddHeader(ArnHeader(flowKey, flowInfo));
+		Ipv4Header ipv4h;
+		ipv4h.SetProtocol(0xFA);
+		ipv4h.SetSource(Ipv4Address(ch.dip));
+		ipv4h.SetDestination(Ipv4Address(ch.sip));
+		ipv4h.SetPayloadSize(p->GetSize());
+		ipv4h.SetTtl(1);
+		Ptr<UniformRandomVariable> rng = CreateObject<UniformRandomVariable>();
+		rng->SetAttribute("Min", DoubleValue(0));
+		rng->SetAttribute("Max", DoubleValue(65536));
+		ipv4h.SetIdentification(rng->GetValue());
+		p->AddHeader(ipv4h);
+		AddHeader(p, 0x800);
+		p->PeekHeader(ch);
+		return p;
+	}
+
 	Ptr<Packet> QbbNetDevice::NICSendPfc(uint32_t qIndex, uint32_t type) {
 	Ptr<Packet> p = Create<Packet>(0);
 	PauseHeader pauseh((type == 0 ? m_pausetime : 0), m_queue->GetNBytes(qIndex),
@@ -518,11 +563,29 @@ namespace ns3 {
 		Simulator::Schedule(txCompleteTime, &QbbNetDevice::TransmitComplete, this);
 
 		bool result = m_channel->TransmitStart(p, this, txTime);
+		if (result) {
+			CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+			p->PeekHeader(ch);
+			if (ch.l3Prot == 0x11) {
+				sendPktSize += p->GetSize();
+				CalculateThroughput();
+			}
+		}
 		if (result == false)
 		{
 			m_phyTxDropTrace(p);
 		}
 		return result;
+	}
+
+	void QbbNetDevice::CalculateThroughput(){
+		uint64_t now = Simulator::Now().GetTimeStep();
+		uint64_t interval = now - last_ts;
+		if (interval == 0) return;
+		last_ts = now;
+		calcBandwidth = (sendPktSize - lastSendPktSize) *
+			(static_cast<double>(Seconds(1).GetTimeStep()) / interval);
+		lastSendPktSize = sendPktSize;
 	}
 
 	Ptr<Channel>

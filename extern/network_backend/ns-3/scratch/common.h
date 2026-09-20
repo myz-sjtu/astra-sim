@@ -32,9 +32,11 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <stdexcept>
+#include <set>
 #include <ns3/rdma-client-helper.h>
 #include <ns3/rdma-client.h>
 #include <ns3/rdma-driver.h>
@@ -91,8 +93,15 @@ int nic_total_pause_time =
 
 uint32_t ack_high_prio = 0;
 uint32_t flow_strategy = 0;  // Flow-based forwarding strategy: 0=ECMP, 1=PathPinning
-uint32_t packet_strategy = 0; // Packet-based forwarding strategy: 0=RR, 1=Random
+uint32_t packet_strategy = 0; // Packet-based forwarding strategy: 0=RR, 1=Random, 2=DLB
 uint8_t default_fwd_mode = 0; // Default forwarding mode for all flows: 0=flow-based, 1=packet spray
+uint32_t arn_packet_strategy = 3; // 3=GLB for the first ARN migration stage
+bool enable_arn = false;
+uint64_t arn_interval_ns = 10000;
+uint64_t arn_congestion_qlen = 5000000;
+std::vector<uint64_t> q_level;
+std::vector<uint64_t> load_level;
+bool enable_arn_trace = false;
 
 struct LinkDownInfo {
   uint32_t link_down_A;
@@ -102,6 +111,9 @@ struct LinkDownInfo {
 map<uint64_t, vector<LinkDownInfo>> link_down_map;
 
 uint32_t enable_trace = 1;
+
+std::set<uint32_t> leafSwitchIds;
+std::set<uint32_t> spineSwitchIds;
 
 uint64_t buffer_size_bytes = 16ull * 1024 * 1024;
 uint64_t long_dist_headroom = 0;
@@ -116,6 +128,27 @@ bool has_short_hdrm_size = false;
 bool has_short_reserve_size = false;
 bool has_long_buffer_size = false;
 bool has_short_buffer_size = false;
+bool print_mmu_config = true;
+
+struct PortBufferOverride {
+  uint64_t headroom;
+  uint64_t reserve;
+  bool has_headroom;
+  bool has_reserve;
+
+  PortBufferOverride()
+      : headroom(0), reserve(0), has_headroom(false), has_reserve(false) {}
+};
+
+PortBufferOverride host_leaf_buffer;
+PortBufferOverride leaf_host_buffer;
+PortBufferOverride leaf_spine_buffer;
+PortBufferOverride spine_leaf_buffer;
+PortBufferOverride spine_spine_buffer;
+
+bool HasPortBufferOverride(const PortBufferOverride &config) {
+  return config.has_headroom || config.has_reserve;
+}
 
 uint32_t qlen_dump_interval = 1000, qlen_mon_interval = 100;
 uint64_t qlen_mon_start = 0, qlen_mon_end = 2100000000;
@@ -124,6 +157,27 @@ string qlen_mon_file;
 
 unordered_map<uint64_t, uint32_t> rate2kmax, rate2kmin;
 unordered_map<uint64_t, double> rate2pmax;
+
+struct PortEcnOverride {
+  uint32_t kmin;
+  uint32_t kmax;
+  double pmax;
+  bool has_kmin;
+  bool has_kmax;
+  bool has_pmax;
+
+  PortEcnOverride()
+      : kmin(0), kmax(0), pmax(0), has_kmin(false), has_kmax(false),
+        has_pmax(false) {}
+};
+
+PortEcnOverride leaf_spine_short_ecn;
+PortEcnOverride spine_leaf_short_ecn;
+PortEcnOverride spine_spine_long_ecn;
+
+bool HasPortEcnOverride(const PortEcnOverride &config) {
+  return config.has_kmin || config.has_kmax || config.has_pmax;
+}
 
 std::string Trim(const std::string &value) {
   size_t begin = value.find_first_not_of(" \t\r\n");
@@ -181,6 +235,78 @@ uint64_t ParseLegacyBufferSize(const std::string &value) {
   return ParseByteSize(value, "BUFFER_SIZE") * 1024ull * 1024;
 }
 
+uint32_t ParseEcnThreshold(const std::string &raw_value,
+                           const std::string &key) {
+  if (HasByteUnitSuffix(raw_value)) {
+    uint64_t bytes = ParseByteSize(raw_value, key);
+    uint64_t units = (bytes + 999) / 1000;
+    NS_ASSERT_MSG(units <= std::numeric_limits<uint32_t>::max(),
+                  key << " exceeds uint32 threshold units: " << raw_value);
+    return static_cast<uint32_t>(units);
+  }
+
+  std::string value = Trim(raw_value);
+  char *end = nullptr;
+  double amount = std::strtod(value.c_str(), &end);
+  NS_ASSERT_MSG(end != value.c_str() && *end == '\0' && amount >= 0,
+                key << " has invalid ECN threshold value: " << raw_value);
+  NS_ASSERT_MSG(amount <= std::numeric_limits<uint32_t>::max(),
+                key << " exceeds uint32 threshold units: " << raw_value);
+  return static_cast<uint32_t>(amount + 0.5);
+}
+
+bool ReadPortEcnOverride(const std::string &key, std::istream &conf) {
+  PortEcnOverride *config = nullptr;
+  enum Field { KMIN, KMAX, PMAX } field;
+
+  if (key == "LEAF_SPINE_SHORT_KMIN") {
+    config = &leaf_spine_short_ecn;
+    field = KMIN;
+  } else if (key == "LEAF_SPINE_SHORT_KMAX") {
+    config = &leaf_spine_short_ecn;
+    field = KMAX;
+  } else if (key == "LEAF_SPINE_SHORT_PMAX") {
+    config = &leaf_spine_short_ecn;
+    field = PMAX;
+  } else if (key == "SPINE_LEAF_SHORT_KMIN") {
+    config = &spine_leaf_short_ecn;
+    field = KMIN;
+  } else if (key == "SPINE_LEAF_SHORT_KMAX") {
+    config = &spine_leaf_short_ecn;
+    field = KMAX;
+  } else if (key == "SPINE_LEAF_SHORT_PMAX") {
+    config = &spine_leaf_short_ecn;
+    field = PMAX;
+  } else if (key == "SPINE_SPINE_LONG_KMIN") {
+    config = &spine_spine_long_ecn;
+    field = KMIN;
+  } else if (key == "SPINE_SPINE_LONG_KMAX") {
+    config = &spine_spine_long_ecn;
+    field = KMAX;
+  } else if (key == "SPINE_SPINE_LONG_PMAX") {
+    config = &spine_spine_long_ecn;
+    field = PMAX;
+  } else {
+    return false;
+  }
+
+  if (field == PMAX) {
+    conf >> config->pmax;
+    config->has_pmax = true;
+  } else {
+    std::string value;
+    conf >> value;
+    if (field == KMIN) {
+      config->kmin = ParseEcnThreshold(value, key);
+      config->has_kmin = true;
+    } else {
+      config->kmax = ParseEcnThreshold(value, key);
+      config->has_kmax = true;
+    }
+  }
+  return true;
+}
+
 /************************************************
  * Runtime varibles
  ***********************************************/
@@ -222,6 +348,85 @@ Interface MakeInterface(uint32_t idx, uint64_t delay, uint64_t bw) {
   interface.delay = delay;
   interface.bw = bw;
   return interface;
+}
+
+std::string ResolvePortRoleName(Ptr<SwitchNode> sw, Ptr<Node> peer) {
+  if (sw == nullptr || peer == nullptr)
+    return "unknown";
+
+  bool local_leaf = leafSwitchIds.find(sw->GetId()) != leafSwitchIds.end();
+  bool local_spine = spineSwitchIds.find(sw->GetId()) != spineSwitchIds.end();
+  bool peer_host = peer->GetNodeType() == 0;
+  bool peer_leaf = leafSwitchIds.find(peer->GetId()) != leafSwitchIds.end();
+  bool peer_spine = spineSwitchIds.find(peer->GetId()) != spineSwitchIds.end();
+
+  if (local_leaf && peer_host)
+    return "leaf-host";
+  if (local_leaf && peer_spine)
+    return "leaf-spine";
+  if (local_spine && peer_leaf)
+    return "spine-leaf";
+  if (local_spine && peer_spine)
+    return "spine-spine";
+  if (local_spine && peer_host)
+    return "spine-host";
+  if (local_leaf && peer_leaf)
+    return "leaf-leaf";
+  return "unknown";
+}
+
+const PortBufferOverride *ResolvePortBufferOverride(Ptr<SwitchNode> sw,
+                                                    Ptr<Node> peer) {
+  if (sw == nullptr || peer == nullptr)
+    return nullptr;
+
+  bool local_leaf = leafSwitchIds.find(sw->GetId()) != leafSwitchIds.end();
+  bool local_spine = spineSwitchIds.find(sw->GetId()) != spineSwitchIds.end();
+  bool peer_host = peer->GetNodeType() == 0;
+  bool peer_leaf = leafSwitchIds.find(peer->GetId()) != leafSwitchIds.end();
+  bool peer_spine = spineSwitchIds.find(peer->GetId()) != spineSwitchIds.end();
+
+  if (local_leaf && peer_host) {
+    if (HasPortBufferOverride(leaf_host_buffer))
+      return &leaf_host_buffer;
+    if (HasPortBufferOverride(host_leaf_buffer))
+      return &host_leaf_buffer;
+  } else if (local_leaf && peer_spine) {
+    if (HasPortBufferOverride(leaf_spine_buffer))
+      return &leaf_spine_buffer;
+  } else if (local_spine && peer_leaf) {
+    if (HasPortBufferOverride(spine_leaf_buffer))
+      return &spine_leaf_buffer;
+  } else if (local_spine && peer_spine) {
+    if (HasPortBufferOverride(spine_spine_buffer))
+      return &spine_spine_buffer;
+  }
+
+  return nullptr;
+}
+
+const PortEcnOverride *ResolvePortEcnOverride(Ptr<SwitchNode> sw,
+                                              Ptr<Node> peer,
+                                              bool is_long_distance) {
+  if (sw == nullptr || peer == nullptr)
+    return nullptr;
+
+  bool local_leaf = leafSwitchIds.find(sw->GetId()) != leafSwitchIds.end();
+  bool local_spine = spineSwitchIds.find(sw->GetId()) != spineSwitchIds.end();
+  bool peer_leaf = leafSwitchIds.find(peer->GetId()) != leafSwitchIds.end();
+  bool peer_spine = spineSwitchIds.find(peer->GetId()) != spineSwitchIds.end();
+
+  if (!is_long_distance && local_leaf && peer_spine &&
+      HasPortEcnOverride(leaf_spine_short_ecn))
+    return &leaf_spine_short_ecn;
+  if (!is_long_distance && local_spine && peer_leaf &&
+      HasPortEcnOverride(spine_leaf_short_ecn))
+    return &spine_leaf_short_ecn;
+  if (is_long_distance && local_spine && peer_spine &&
+      HasPortEcnOverride(spine_spine_long_ecn))
+    return &spine_spine_long_ecn;
+
+  return nullptr;
 }
 
 struct UpInterfaceSummary {
@@ -794,6 +999,30 @@ bool ReadConf(string network_configuration) {
       conf >> flow_strategy;
     } else if (key.compare("PACKET_STRATEGY") == 0) {
       conf >> packet_strategy;
+    } else if (key.compare("ARN_PACKET_STRATEGY") == 0) {
+      conf >> arn_packet_strategy;
+    } else if (key.compare("ENABLE_ARN") == 0) {
+      uint32_t value;
+      conf >> value;
+      enable_arn = value != 0;
+    } else if (key.compare("ARN_INTERVAL") == 0 || key.compare("ARN_INTERVAL_NS") == 0) {
+      conf >> arn_interval_ns;
+    } else if (key.compare("ARN_CONGESTION_QLEN") == 0) {
+      conf >> arn_congestion_qlen;
+    } else if (key.compare("Q_LEVEL") == 0) {
+      uint32_t count;
+      conf >> count;
+      q_level.resize(count);
+      for (uint32_t i = 0; i < count; ++i) conf >> q_level[i];
+    } else if (key.compare("LOAD_LEVEL") == 0) {
+      uint32_t count;
+      conf >> count;
+      load_level.resize(count);
+      for (uint32_t i = 0; i < count; ++i) conf >> load_level[i];
+    } else if (key.compare("ENABLE_ARN_TRACE") == 0) {
+      uint32_t value;
+      conf >> value;
+      enable_arn_trace = value != 0;
     } else if (key.compare("DEFAULT_FWD_MODE") == 0) {
       uint32_t v;
       conf >> v;
@@ -837,6 +1066,7 @@ bool ReadConf(string network_configuration) {
         conf >> rate >> p;
         rate2pmax[rate] = p;
       }
+    } else if (ReadPortEcnOverride(key, conf)) {
     } else if (key.compare("BUFFER_SIZE") == 0) {
       std::string v;
       conf >> v;
@@ -871,6 +1101,66 @@ bool ReadConf(string network_configuration) {
       conf >> v;
       short_buffer_size = ParseByteSize(v, key);
       has_short_buffer_size = true;
+    } else if (key.compare("HOST_LEAF_HEADROOM") == 0 ||
+               key.compare("HOST_LEAF_HDRM_SIZE") == 0) {
+      std::string v;
+      conf >> v;
+      host_leaf_buffer.headroom = ParseByteSize(v, key);
+      host_leaf_buffer.has_headroom = true;
+    } else if (key.compare("HOST_LEAF_RESERVE") == 0) {
+      std::string v;
+      conf >> v;
+      host_leaf_buffer.reserve = ParseByteSize(v, key);
+      host_leaf_buffer.has_reserve = true;
+    } else if (key.compare("LEAF_HOST_HEADROOM") == 0 ||
+               key.compare("LEAF_HOST_HDRM_SIZE") == 0) {
+      std::string v;
+      conf >> v;
+      leaf_host_buffer.headroom = ParseByteSize(v, key);
+      leaf_host_buffer.has_headroom = true;
+    } else if (key.compare("LEAF_HOST_RESERVE") == 0) {
+      std::string v;
+      conf >> v;
+      leaf_host_buffer.reserve = ParseByteSize(v, key);
+      leaf_host_buffer.has_reserve = true;
+    } else if (key.compare("LEAF_SPINE_HEADROOM") == 0 ||
+               key.compare("LEAF_SPINE_HDRM_SIZE") == 0) {
+      std::string v;
+      conf >> v;
+      leaf_spine_buffer.headroom = ParseByteSize(v, key);
+      leaf_spine_buffer.has_headroom = true;
+    } else if (key.compare("LEAF_SPINE_RESERVE") == 0) {
+      std::string v;
+      conf >> v;
+      leaf_spine_buffer.reserve = ParseByteSize(v, key);
+      leaf_spine_buffer.has_reserve = true;
+    } else if (key.compare("SPINE_LEAF_HEADROOM") == 0 ||
+               key.compare("SPINE_LEAF_HDRM_SIZE") == 0) {
+      std::string v;
+      conf >> v;
+      spine_leaf_buffer.headroom = ParseByteSize(v, key);
+      spine_leaf_buffer.has_headroom = true;
+    } else if (key.compare("SPINE_LEAF_RESERVE") == 0) {
+      std::string v;
+      conf >> v;
+      spine_leaf_buffer.reserve = ParseByteSize(v, key);
+      spine_leaf_buffer.has_reserve = true;
+    } else if (key.compare("SPINE_SPINE_HEADROOM") == 0 ||
+               key.compare("SPINE_SPINE_HDRM_SIZE") == 0) {
+      std::string v;
+      conf >> v;
+      spine_spine_buffer.headroom = ParseByteSize(v, key);
+      spine_spine_buffer.has_headroom = true;
+    } else if (key.compare("SPINE_SPINE_RESERVE") == 0) {
+      std::string v;
+      conf >> v;
+      spine_spine_buffer.reserve = ParseByteSize(v, key);
+      spine_spine_buffer.has_reserve = true;
+    } else if (key.compare("PRINT_MMU_CONFIG") == 0 ||
+               key.compare("ENABLE_MMU_CONFIG_TRACE") == 0) {
+      uint32_t value;
+      conf >> value;
+      print_mmu_config = value != 0;
     } else if (key.compare("QLEN_MON_FILE") == 0) {
       conf >> qlen_mon_file;
     } else if (key.compare("QLEN_MON_START") == 0) {
@@ -904,6 +1194,8 @@ bool ReadConf(string network_configuration) {
     drop_log_file = GetSiblingOutputFile(fct_output_file, "drop-log.txt");
   if (reorder_output_file.empty())
     reorder_output_file = GetSiblingOutputFile(fct_output_file, "reorder_stats.txt");
+  NS_ASSERT_MSG(packet_strategy <= 2,
+                "PACKET_STRATEGY must be 0=FlowBaseRR, 1=Random, or 2=DLB");
   return true;
 }
 
@@ -1002,16 +1294,20 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
   }
 
   std::vector<uint32_t> node_type(node_num, 0);
+  leafSwitchIds.clear();
+  spineSwitchIds.clear();
   if (topology_header_values.size() == 4) {
     for (uint32_t i = 0; i < leaf_num; i++) {
       uint32_t sid;
       topof >> sid;
       node_type[sid] = 1;
+      leafSwitchIds.insert(sid);
     }
     for (uint32_t i = 0; i < spine_num; i++) {
       uint32_t sid;
       topof >> sid;
       node_type[sid] = 1;
+      spineSwitchIds.insert(sid);
     }
   } else {
     for (uint32_t i = 0; i < switch_num; i++) {
@@ -1130,11 +1426,35 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
                                     DynamicCast<QbbNetDevice>(d.Get(1))));
   }
 
+  // Build host-IP to leaf ownership after all links are attached.  This keeps
+  // ARN reverse-path handling independent of Attach() ordering.
+  for (uint32_t leafId : leafSwitchIds) {
+    Ptr<SwitchNode> leaf = DynamicCast<SwitchNode>(n.Get(leafId));
+    if (!leaf) continue;
+    for (const auto &entry : leaf->m_ifToNode) {
+      Ptr<Node> host = entry.second;
+      if (host && host->GetNodeType() == 0 && host->GetId() < serverAddress.size()) {
+        uint32_t ip = serverAddress[host->GetId()].Get();
+        leaf->m_ipToLeafId[ip] = leaf;
+        SwitchNode::RegisterHostLeaf(ip, leaf);
+      }
+    }
+  }
+
   nic_rate = get_nic_rate(n);
   // config switch
   for (uint32_t i = 0; i < node_num; i++) {
     if (n.Get(i)->GetNodeType() == 1) { // is switch
       Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(n.Get(i));
+      sw->SetAttribute("ArnEnabled", BooleanValue(enable_arn));
+      sw->SetAttribute("ArnPacketStrategy", UintegerValue(arn_packet_strategy));
+      sw->SetAttribute("IsLeaf", BooleanValue(leafSwitchIds.find(i) != leafSwitchIds.end()));
+      sw->SetAttribute("IsSpine", BooleanValue(spineSwitchIds.find(i) != spineSwitchIds.end()));
+      sw->SetAttribute("ArnInterval", TimeValue(NanoSeconds(arn_interval_ns)));
+      sw->SetAttribute("CongestionQueueLength", UintegerValue(arn_congestion_qlen));
+      sw->SetAttribute("ArnTrace", BooleanValue(enable_arn_trace));
+      sw->q_level = q_level;
+      sw->load_level = load_level;
       uint32_t shift = 3; // by default 1/8
       bool has_long_distance_port = false;
       bool explicit_port_buffer_config =
@@ -1143,6 +1463,8 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
       bool explicit_switch_buffer_config =
           has_long_buffer_size || has_short_buffer_size;
 
+      if (print_mmu_config)
+        std::cout << "SwitchNode: " << sw->GetId() << ":" << std::endl;
       for (uint32_t j = 1; j < sw->GetNDevices(); j++) {
         Ptr<QbbNetDevice> dev = DynamicCast<QbbNetDevice>(sw->GetDevice(j));
         // set ecn
@@ -1153,8 +1475,9 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
                       "must set kmax for each link speed");
         NS_ASSERT_MSG(rate2pmax.find(port_rate) != rate2pmax.end(),
                       "must set pmax for each link speed");
-        sw->m_mmu->ConfigEcn(j, rate2kmin[port_rate], rate2kmax[port_rate],
-                             rate2pmax[port_rate]);
+        uint32_t ecn_kmin = rate2kmin[port_rate];
+        uint32_t ecn_kmax = rate2kmax[port_rate];
+        double ecn_pmax = rate2pmax[port_rate];
         // set pfc
         uint64_t delay = DynamicCast<QbbChannel>(dev->GetChannel())
                              ->GetDelay()
@@ -1167,8 +1490,11 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
             static_cast<uint64_t>(MicroSeconds(100).GetTimeStep());
         bool is_long_distance_port = delay >= long_distance_delay_threshold;
         sw->m_mmu->ConfigPortDistance(j, is_long_distance_port);
-        // HPCC-Dev applies delay-port admission/PFC behavior to all switch ports.
-        sw->m_mmu->ConfigDelayPort(j);
+        // Use delay-port admission/PFC behavior only for long-distance ports.
+        if (is_long_distance_port)
+        {
+          sw->m_mmu->ConfigDelayPort(j);
+        }
         has_long_distance_port =
             has_long_distance_port || sw->m_mmu->IsLongDistancePort(j);
         if (explicit_port_buffer_config) {
@@ -1181,8 +1507,42 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
             reserve = has_short_reserve_size ? short_reserve_size : headroom;
           }
         }
+        Ptr<Node> peer = nullptr;
+        auto peer_it = sw->m_ifToNode.find(j);
+        if (peer_it != sw->m_ifToNode.end())
+          peer = peer_it->second;
+        std::string port_role = ResolvePortRoleName(sw, peer);
+        const PortBufferOverride *role_buffer =
+            ResolvePortBufferOverride(sw, peer);
+        const PortEcnOverride *role_ecn =
+            ResolvePortEcnOverride(sw, peer, is_long_distance_port);
+        if (role_ecn != nullptr) {
+          if (role_ecn->has_kmin)
+            ecn_kmin = role_ecn->kmin;
+          if (role_ecn->has_kmax)
+            ecn_kmax = role_ecn->kmax;
+          if (role_ecn->has_pmax)
+            ecn_pmax = role_ecn->pmax;
+        }
+        sw->m_mmu->ConfigEcn(j, ecn_kmin, ecn_kmax, ecn_pmax);
+        if (role_buffer != nullptr) {
+          if (role_buffer->has_headroom)
+            headroom = role_buffer->headroom;
+          if (role_buffer->has_reserve)
+            reserve = role_buffer->reserve;
+          else if (role_buffer->has_headroom)
+            reserve = headroom;
+        }
         sw->m_mmu->ConfigHdrm(j, headroom);
         sw->m_mmu->ConfigRsrv(j, reserve);
+        if (print_mmu_config) {
+          std::cout << "\tport: " << j << ", role: " << port_role
+                    << ", headroom: " << headroom
+                    << ", reserve: " << reserve << ", rate: " << port_rate
+                    << ", delay: " << delay << ", ecn_kmin: " << ecn_kmin
+                    << ", ecn_kmax: " << ecn_kmax
+                    << ", ecn_pmax: " << ecn_pmax << std::endl;
+        }
 
         // set pfc alpha, proportional to link bw
         sw->m_mmu->pfc_a_shift[j] = shift;
@@ -1202,6 +1562,12 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
       }
       sw->m_mmu->ConfigBufferSize(selected_buffer_size);
       sw->m_mmu->node_id = sw->GetId();
+      if (print_mmu_config) {
+        std::cout << "\t"
+                  << (has_long_distance_port ? "Long" : "Short")
+                  << " distance BufferSize: " << selected_buffer_size
+                  << std::endl;
+      }
     }
   }
 

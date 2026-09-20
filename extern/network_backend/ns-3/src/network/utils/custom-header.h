@@ -89,7 +89,7 @@ public:
   uint16_t m_headerSize; //!< IP header size
 
   union {
-	  struct {
+  struct {
 		  uint16_t sport;        //!< Source port
 		  uint16_t dport;   //!< Destination port
 		  uint32_t seq;  //!< Sequence number
@@ -131,17 +131,22 @@ public:
 		  uint32_t time;
 		  uint32_t qlen;
 		  uint8_t qIndex;
-	  } pfc;
+  } pfc;
+  struct {
+    struct { uint32_t src, dst, sport, dport; } flowKey;
+    struct { uint32_t qlen, q_level, load_level, arn_type; uint64_t ts; } flowInfo;
+  } arn;
   };
 
   uint8_t GetIpv4EcnBits (void) const;
   static uint32_t GetAckSerializedSize(void);
   static uint32_t GetUdpHeaderSize(void); // include udp, seqTs, INT
   static uint32_t GetStaticWholeHeaderSize(void); // ppp + ip + udp + int
+  static uint32_t GetArnSerializedSize(void);
+  static uint32_t GetArnWholeHeaderSize(void);
 };
 
 } // namespace ns3
 
 
 #endif /* CUSTOM_HEADER_H */
-

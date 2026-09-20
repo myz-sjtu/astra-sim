@@ -19,6 +19,7 @@ set(source_files
     model/arp-header.cc
     model/arp-l3-protocol.cc
     model/arp-queue-disc-item.cc
+    model/arn-header.cc
     model/candidate-queue.cc
     model/global-route-manager-impl.cc
     model/global-route-manager.cc
@@ -149,6 +150,7 @@ set(header_files
     model/arp-header.h
     model/arp-l3-protocol.h
     model/arp-queue-disc-item.h
+    model/arn-header.h
     model/candidate-queue.h
     model/global-route-manager-impl.h
     model/global-route-manager.h

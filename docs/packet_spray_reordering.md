@@ -2,9 +2,24 @@
 
 ## 背景
 
-ns-3 后端中，`fwd_mode=1` 或 `DEFAULT_FWD_MODE=1` 会让 RDMA data packet 使用 packet-spray 转发；`PACKET_STRATEGY=0` 表示交换机按 ingress port 对可用下一跳做 round-robin，`PACKET_STRATEGY=1` 表示对可用下一跳做逐包随机选择。逐包喷洒能提升多路径利用率，但同一 flow 的连续包会经过不同路径，不同路径上的传播时延、排队、PFC/ECN、链路故障和重路由会让高序号包先到达接收端。
+ns-3 后端中，`fwd_mode=1` 或 `DEFAULT_FWD_MODE=1` 会让 RDMA data packet 使用 packet-spray 转发；`PACKET_STRATEGY=0` 表示交换机按 ingress port 对可用下一跳做 flow-base round-robin，`PACKET_STRATEGY=1` 表示对可用下一跳做逐包随机选择，`PACKET_STRATEGY=2` 表示 DLB：按目标 priority group 的 egress queue bytes 选择排队最少的一半下一跳，再从中随机选一个端口。逐包喷洒能提升多路径利用率，但同一 flow 的连续包会经过不同路径，不同路径上的传播时延、排队、PFC/ECN、链路故障和重路由会让高序号包先到达接收端。
 
 接收端只能推进从 `ReceiverNextExpectedSeq` 开始的连续字节前缀。乱序包提前到达时会进入 OOO 缓存，ACK 只能确认连续前缀，因此发送窗口可能无法及时滑动；在更极端情况下，NACK/RTO/重传会进一步增加有效负载以外的网络负担。宏观表现通常是 FCT 增大、有效吞吐下降、尾延迟变差。
+
+## Flow-base RR 设计
+
+原始 RR 只使用 `m_rrCounter[inDev] % nexthops.size()`，同步启动且包大小一致的 flow 容易在不同 ingress port 上保持相同初始相位。当前 `PACKET_STRATEGY=0` 直接在原 RR 实现上叠加 flow base：
+
+```text
+flow_base = hash(sip, dip, sport, dport, pg, inDev) % nexthops
+idx       = (m_rrCounter[inDev] + flow_base) % nexthops
+```
+
+这样仍保留 ingress-port RR counter 和逐包轮询行为，但不同 flow 的起始相位由 flow key 打散，避免同步流的首包和后续周期性包集中落到同一下一跳端口。
+
+## DLB 设计
+
+`PACKET_STRATEGY=2` 读取每个可用下一跳在当前 `pg` 上的 `m_mmu->egress_bytes[outDev][pg]`，按队列字节数从小到大排序。为避免大量同步包都压到当前单一最短队列，DLB 不直接返回全局最小端口，而是在排序后的最优半数端口中随机选择；候选数为奇数时向上取整，保证至少有一个候选端口。
 
 ## 统计位置
 

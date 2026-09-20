@@ -1,0 +1,102 @@
+{
+  "name": "packet_glb",
+  "num_npus": 64,
+  "topology_file": "examples/custom_network/topology/clos_2dc_16spine_64_long_topo.txt",
+  "traffic": {
+    "pattern": "half_doubling_allreduce",
+    "offsets": [32],
+    "bytes_per_flow": 500000000,
+    "start_time_s": 2,
+    "include_reverse": false,
+    "phase_order": "forward_then_reverse",
+    "phase_sync": "per_phase"
+  },
+  "network": {
+    "default_fwd_mode": 1,
+    "flow_strategy": 1,
+    "packet_strategy": 0,
+    "enable_arn": 1,
+    "arn_packet_strategy": 3,
+    "arn_interval": 10000,
+    "arn_congestion_qlen": 5000000,
+    "q_level": [
+      0,
+      125000,
+      250000,
+      500000,
+      750000,
+      1000000,
+      1500000,
+      2000000,
+      3000000,
+      4000000,
+      6000000,
+      8000000,
+      12000000,
+      16000000,
+      24000000
+    ],
+    "load_level": [
+      0,
+      5000000000,
+      10000000000,
+      15000000000,
+      20000000000,
+      25000000000,
+      30000000000,
+      35000000000,
+      40000000000,
+      45000000000,
+      50000000000,
+      55000000000,
+      60000000000,
+      65000000000,
+      70000000000,
+      75000000000,
+      80000000000,
+      85000000000,
+      90000000000,
+      95000000000,
+      100000000000
+    ],
+    "enable_arn_trace": 0,
+    "enable_trace": 0,
+    "print_mmu_config": 1,
+    "qlen_mon_start_ns": 2000000000,
+    "qlen_mon_end_ns": 3000000000,
+    "qlen_mon_interval_ns": 100000,
+    "buffer_config": {
+      "long_buffer_size": "67158192B",
+      "short_buffer_size": "33554432B",
+      "host_leaf_headroom": "37500B",
+      "host_leaf_reserve": "4096B",
+      "leaf_host_headroom": "37500B",
+      "leaf_host_reserve": "4096B",
+
+      "leaf_spine_headroom": "75000B",
+      "leaf_spine_reserve": "4096B",
+      "spine_leaf_headroom": "75000B",
+      "spine_leaf_reserve": "4096B",
+
+      "spine_spine_headroom": "40000000B",
+      "spine_spine_reserve": "25000000B"
+    },
+    "config_overrides": {
+      "ENABLE_RTO": 1,
+      "ENABLE_PFC": 1,
+      "ENABLE_QCN": 0,
+      "USE_DYNAMIC_PFC_THRESHOLD": 1,
+      "CC_MODE": 1,
+      "ACK_HIGH_PRIO": 1,
+      "HAS_WIN": 1,
+      "GLOBAL_T": 1,
+      "WAIT_ACK_TIMEOUT": 4000,
+      "SIMULATOR_STOP_TIME": 50.0
+    },
+    "ecn_thresholds": [
+      {"bandwidth": "200Gbps", "kmin": 1600, "kmax": 3200, "pmax": 0.2},
+      {"bandwidth": "400Gbps", "kmin": 3200, "kmax": 6400, "pmax": 0.2},
+      {"bandwidth": "800Gbps", "kmin": 6400, "kmax": 12800, "pmax": 0.2}
+    ]
+  }
+}

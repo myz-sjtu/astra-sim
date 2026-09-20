@@ -55,6 +55,9 @@ FWD_MODE_DESCRIPTION = (
     "0=flow-based (uses FLOW_STRATEGY: 0=ECMP, 1=path-pinning), "
     "1=packet-spray"
 )
+PACKET_STRATEGY_DESCRIPTION = (
+    "0=FlowBaseRR, 1=Random, 2=DLB(best-half-random)"
+)
 
 
 class ScenarioError(ValueError):
@@ -601,6 +604,21 @@ def normalize_buffer_config(raw_buffer_config: Any) -> dict[str, str]:
         "short_reserve_size": "SHORT_RESERVE_SIZE",
         "long_buffer_size": "LONG_BUFFER_SIZE",
         "short_buffer_size": "SHORT_BUFFER_SIZE",
+        "host_leaf_headroom": "HOST_LEAF_HEADROOM",
+        "host_leaf_hdrm_size": "HOST_LEAF_HEADROOM",
+        "host_leaf_reserve": "HOST_LEAF_RESERVE",
+        "leaf_host_headroom": "LEAF_HOST_HEADROOM",
+        "leaf_host_hdrm_size": "LEAF_HOST_HEADROOM",
+        "leaf_host_reserve": "LEAF_HOST_RESERVE",
+        "leaf_spine_headroom": "LEAF_SPINE_HEADROOM",
+        "leaf_spine_hdrm_size": "LEAF_SPINE_HEADROOM",
+        "leaf_spine_reserve": "LEAF_SPINE_RESERVE",
+        "spine_leaf_headroom": "SPINE_LEAF_HEADROOM",
+        "spine_leaf_hdrm_size": "SPINE_LEAF_HEADROOM",
+        "spine_leaf_reserve": "SPINE_LEAF_RESERVE",
+        "spine_spine_headroom": "SPINE_SPINE_HEADROOM",
+        "spine_spine_hdrm_size": "SPINE_SPINE_HEADROOM",
+        "spine_spine_reserve": "SPINE_SPINE_RESERVE",
     }
     normalized: dict[str, str] = {}
     for field, value in raw_buffer_config.items():
@@ -613,6 +631,15 @@ def normalize_buffer_config(raw_buffer_config: Any) -> dict[str, str]:
         normalized["SHORT_RESERVE_SIZE"] = normalized["SHORT_HDRM_SIZE"]
     if "LONG_DIST_HEADROOM" in normalized and "LONG_DIST_RESERVE" not in normalized:
         normalized["LONG_DIST_RESERVE"] = normalized["LONG_DIST_HEADROOM"]
+    for headroom_key, reserve_key in [
+        ("HOST_LEAF_HEADROOM", "HOST_LEAF_RESERVE"),
+        ("LEAF_HOST_HEADROOM", "LEAF_HOST_RESERVE"),
+        ("LEAF_SPINE_HEADROOM", "LEAF_SPINE_RESERVE"),
+        ("SPINE_LEAF_HEADROOM", "SPINE_LEAF_RESERVE"),
+        ("SPINE_SPINE_HEADROOM", "SPINE_SPINE_RESERVE"),
+    ]:
+        if headroom_key in normalized and reserve_key not in normalized:
+            normalized[reserve_key] = normalized[headroom_key]
     return normalized
 
 
@@ -763,15 +790,50 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
     packet_strategy = require_int(
         network.get("packet_strategy", 0), "network.packet_strategy"
     )
-    if packet_strategy not in (0, 1):
+    if packet_strategy not in (0, 1, 2):
         raise ScenarioError(
-            "network.packet_strategy must be 0=RR or 1=Random "
+            f"network.packet_strategy must be {PACKET_STRATEGY_DESCRIPTION} "
             "for packet-spray fwd_mode=1 traffic"
         )
+
+    enable_arn = require_int(network.get("enable_arn", 0), "network.enable_arn")
+    if enable_arn not in (0, 1):
+        raise ScenarioError("network.enable_arn must be 0 or 1")
+    arn_packet_strategy = require_int(
+        network.get("arn_packet_strategy", 3), "network.arn_packet_strategy"
+    )
+    if arn_packet_strategy != 3:
+        raise ScenarioError("network.arn_packet_strategy must be 3=GLB in this migration")
+    arn_interval_raw = network.get("arn_interval")
+    if arn_interval_raw is None:
+        arn_interval_raw = network.get("arn_interval_ns", 10000)
+    arn_interval = require_int(arn_interval_raw, "network.arn_interval", 1)
+    arn_congestion_qlen = require_int(
+        network.get("arn_congestion_qlen", 5_000_000), "network.arn_congestion_qlen", 1
+    )
+    def normalize_levels(value: Any, field: str) -> list[int]:
+        if value is None:
+            return []
+        if not isinstance(value, list) or any(isinstance(item, bool) for item in value):
+            raise ScenarioError(f"network.{field} must be a list of non-negative integers")
+        levels = [require_int(item, f"network.{field}[{index}]") for index, item in enumerate(value)]
+        if levels and levels != sorted(levels) or len(set(levels)) != len(levels):
+            raise ScenarioError(f"network.{field} must be strictly increasing")
+        return levels
+    q_level = normalize_levels(network.get("q_level"), "q_level")
+    load_level = normalize_levels(network.get("load_level"), "load_level")
+    enable_arn_trace = require_int(network.get("enable_arn_trace", 0), "network.enable_arn_trace")
+    if enable_arn_trace not in (0, 1):
+        raise ScenarioError("network.enable_arn_trace must be 0 or 1")
 
     enable_trace = require_int(network.get("enable_trace", 0), "network.enable_trace")
     if enable_trace not in (0, 1):
         raise ScenarioError("network.enable_trace must be 0 or 1")
+    print_mmu_config = require_int(
+        network.get("print_mmu_config", 1), "network.print_mmu_config"
+    )
+    if print_mmu_config not in (0, 1):
+        raise ScenarioError("network.print_mmu_config must be 0 or 1")
     qlen_mon_start_ns = require_int(
         network.get("qlen_mon_start_ns", 0), "network.qlen_mon_start_ns"
     )
@@ -848,7 +910,15 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
             "default_fwd_mode": default_fwd_mode,
             "flow_strategy": flow_strategy,
             "packet_strategy": packet_strategy,
+            "enable_arn": enable_arn,
+            "arn_packet_strategy": arn_packet_strategy,
+            "arn_interval": arn_interval,
+            "arn_congestion_qlen": arn_congestion_qlen,
+            "q_level": q_level,
+            "load_level": load_level,
+            "enable_arn_trace": enable_arn_trace,
             "enable_trace": enable_trace,
+            "print_mmu_config": print_mmu_config,
             "qlen_mon_start_ns": qlen_mon_start_ns,
             "qlen_mon_end_ns": qlen_mon_end_ns,
             "qlen_mon_interval_ns": qlen_mon_interval_ns,
@@ -1161,10 +1231,20 @@ def generate(
         "DEFAULT_FWD_MODE": str(network["default_fwd_mode"]),
         "FLOW_STRATEGY": str(network["flow_strategy"]),
         "PACKET_STRATEGY": str(network["packet_strategy"]),
+        "ENABLE_ARN": str(network["enable_arn"]),
+        "ARN_PACKET_STRATEGY": str(network["arn_packet_strategy"]),
+        "ARN_INTERVAL": str(network["arn_interval"]),
+        "ARN_CONGESTION_QLEN": str(network["arn_congestion_qlen"]),
+        "ENABLE_ARN_TRACE": str(network["enable_arn_trace"]),
         "ENABLE_TRACE": str(network["enable_trace"]),
+        "PRINT_MMU_CONFIG": str(network["print_mmu_config"]),
         "LINK_DOWN": render_link_down(network["link_down"]),
     }
     replacements.update(network["buffer_config"])
+    if network["q_level"]:
+        replacements["Q_LEVEL"] = f"{len(network['q_level'])} " + " ".join(str(v) for v in network["q_level"])
+    if network["load_level"]:
+        replacements["LOAD_LEVEL"] = f"{len(network['load_level'])} " + " ".join(str(v) for v in network["load_level"])
     if network["ecn_thresholds"] is not None:
         thresholds = network["ecn_thresholds"]
         replacements.update(

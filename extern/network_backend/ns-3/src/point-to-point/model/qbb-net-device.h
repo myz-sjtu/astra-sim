@@ -24,6 +24,7 @@
 #include "ns3/qbb-channel.h"
 //#include "ns3/fivetuple.h"
 #include "ns3/event-id.h"
+#include "ns3/arn-header.h"
 #include "ns3/broadcom-egress-queue.h"
 #include "ns3/ipv4.h"
 #include "ns3/ipv4-header.h"
@@ -128,6 +129,11 @@ public:
 
 	void SendPfc(uint32_t qIndex, uint32_t type); // type: 0 = pause, 1 = resume
   Ptr<Packet> NICSendPfc(uint32_t qIndex, uint32_t type);
+  void SendArn(uint32_t qIndex, ArnHeader::FlowKey flowKey,
+               ArnHeader::FlowInfo flowInfo, CustomHeader &oldCh);
+  Ptr<Packet> ArnHeaderProcess(ArnHeader::FlowKey flowKey,
+                               ArnHeader::FlowInfo flowInfo, CustomHeader &ch);
+  void CalculateThroughput();
 
 	TracedCallback<Ptr<const Packet>, uint32_t> m_traceEnqueue;
 	TracedCallback<Ptr<const Packet>, uint32_t> m_traceDequeue;
@@ -201,6 +207,12 @@ public:
 	// callback for sent a packet
 	typedef Callback<void, Ptr<RdmaQueuePair>, Ptr<Packet>, Time> RdmaPktSent;
 	RdmaPktSent m_rdmaPktSent;
+
+	// UDP data throughput sample used by ARN-GLB.  RTO state remains separate.
+	uint64_t sendPktSize;
+	uint64_t lastSendPktSize;
+	double calcBandwidth;
+	uint64_t last_ts;
 
 	Ptr<RdmaEgressQueue> GetRdmaQueue();
 	void TakeDown(); // take down this device

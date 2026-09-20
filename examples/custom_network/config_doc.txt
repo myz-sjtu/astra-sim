@@ -62,7 +62,7 @@ RATE_BOUND 1 {0: no rate limiter, 1: enable rate limiter}
 ACK_HIGH_PRIO 0 {0: ACK shares data priority, 1: ACK uses high priority queue}
 
 FLOW_STRATEGY 1 {flow-based switch forwarding: 0 ECMP, 1 PathPinning}
-PACKET_STRATEGY 0 {packet-based switch forwarding: 0 round-robin packet spray, 1 random packet spray}
+PACKET_STRATEGY 0 {packet-based switch forwarding: 0 ßround-robin packet spray, 1 random packet spray, 2 DLB packet spray over the least-queued half of nexthops}
 DEFAULT_FWD_MODE 0 {default per-flow forwarding mode: 0 flow-based forwarding, 1 packet-spray forwarding}
 
 LINK_DOWN 0 {no link failures}
@@ -75,6 +75,15 @@ ENABLE_TRACE 0 {0: disable packet-level tracing, 1: enable tracing for TRACE_FIL
 KMAX_MAP 2 200000000000 2400 400000000000 3200 {map from link bandwidth in bps to ECN kmax threshold}
 KMIN_MAP 2 200000000000 600 400000000000 800 {map from link bandwidth in bps to ECN kmin threshold}
 PMAX_MAP 2 200000000000 0.2 400000000000 0.2 {map from link bandwidth in bps to ECN pmax probability}
+LEAF_SPINE_SHORT_KMIN 3000 {optional per-port-role ECN kmin override; same threshold unit as KMIN_MAP, i.e. value * 1000 bytes}
+LEAF_SPINE_SHORT_KMAX 6000 {optional per-port-role ECN kmax override for short leaf->spine ports}
+LEAF_SPINE_SHORT_PMAX 0.05 {optional per-port-role ECN pmax override for short leaf->spine ports}
+SPINE_LEAF_SHORT_KMIN 1500 {optional per-port-role ECN kmin override for short spine->leaf ports}
+SPINE_LEAF_SHORT_KMAX 3500 {optional per-port-role ECN kmax override for short spine->leaf ports}
+SPINE_LEAF_SHORT_PMAX 0.05 {optional per-port-role ECN pmax override for short spine->leaf ports}
+SPINE_SPINE_LONG_KMIN 8000 {optional per-port-role ECN kmin override for long spine->spine ports}
+SPINE_SPINE_LONG_KMAX 16000 {optional per-port-role ECN kmax override for long spine->spine ports; use 18000 for a looser long-link setting}
+SPINE_SPINE_LONG_PMAX 0.05 {optional per-port-role ECN pmax override for long spine->spine ports}
 
 BUFFER_SIZE 32 {legacy fallback per-switch MMU buffer size in MB}
 HEADROOM_FACTOR 3 {legacy fallback PFC headroom = link_rate * link_delay / 8 / 1e9 * HEADROOM_FACTOR}
@@ -101,4 +110,4 @@ Config files under examples/custom_network/config_hpcc_case*.txt are base templa
 generate_custom_inputs.py rewrites TOPOLOGY_FILE, FLOW_FILE, TRACE_FILE, FCT_OUTPUT_FILE, REORDER_OUTPUT_FILE, other output paths, FLOW_STRATEGY, DEFAULT_FWD_MODE, monitor times, and ECN maps into generated/<name>/network_config.txt.
 scenario.network.config_overrides can rewrite raw config keys such as ENABLE_PFC, ENABLE_QCN, ENABLE_RTO, WAIT_ACK_TIMEOUT, CC_MODE, ACK_HIGH_PRIO, and USE_DYNAMIC_PFC_THRESHOLD.
 Use FLOW_STRATEGY 1 with DEFAULT_FWD_MODE 0 to exercise HPCC-Dev-style path pinning.
-Use DEFAULT_FWD_MODE 1 to exercise packet spray; packet spray uses PACKET_STRATEGY 0=round-robin or 1=random.
+Use DEFAULT_FWD_MODE 1 to exercise packet spray; packet spray uses PACKET_STRATEGY 0=flow-base round-robin, 1=random, or 2=DLB least-queued half random.

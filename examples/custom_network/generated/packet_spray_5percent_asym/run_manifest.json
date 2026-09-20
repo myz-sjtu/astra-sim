@@ -1,0 +1,15 @@
+{
+  "name": "packet_random_5percent_asym",
+  "num_npus": 64,
+  "workload_configuration": "../../../examples/custom_network/generated/packet_random_5percent_asym/workload/custom_traffic",
+  "system_configuration": "../../../examples/system/native_collectives/Ring_4chunks.json",
+  "network_configuration": "../../../examples/custom_network/generated/packet_random_5percent_asym/network_config.txt",
+  "remote_memory_configuration": "../../../examples/remote_memory/analytical/no_memory_expansion.json",
+  "logical_topology_configuration": "../../../examples/custom_network/generated/packet_random_5percent_asym/logical_topology.json",
+  "comm_group_configuration": "empty",
+  "fct_output": "scratch/output/packet_random_5percent_asym/fct.txt",
+  "reorder_output": "scratch/output/packet_random_5percent_asym/reorder_stats.txt",
+  "output_directory": "scratch/output/packet_random_5percent_asym",
+  "annotation_command": "python3 ../../../examples/custom_network/annotate_output_files.py --output-dir scratch/output/packet_random_5percent_asym",
+  "traffic_manifest": "../../../examples/custom_network/generated/packet_random_5percent_asym/traffic_manifest.json"
+}

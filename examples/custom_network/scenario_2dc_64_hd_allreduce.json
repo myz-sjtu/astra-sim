@@ -1,65 +1,62 @@
 {
-  "name": "hd_path_pinning_linkfail_shallowbuffer",
+  "name": "hd_pathpinning",
   "num_npus": 64,
   "topology_file": "examples/custom_network/topology/clos_2dc_64_long_topo_mul.txt",
   "traffic": {
     "pattern": "half_doubling_allreduce",
-    "offsets": [
-      32
-    ],
+    "offsets": [32],
     "bytes_per_flow": 500000000,
     "start_time_s": 2,
     "include_reverse": false,
-    "phase_order": "forward_then_reverse", 
+    "phase_order": "forward_then_reverse",
     "phase_sync": "per_phase"
   },
   "network": {
     "default_fwd_mode": 0,
     "flow_strategy": 1,
-    "packet_strategy": 1,
+    "packet_strategy": 0,
     "enable_trace": 0,
     "qlen_mon_start_ns": 2000000000,
     "qlen_mon_end_ns": 3000000000,
     "qlen_mon_interval_ns": 100000,
-    "link_down": [
-      {
-        "time_us": 0,
-        "src": 67,
-        "dst": 69,
-        "link_idx": 8
-      }
-    ],
+    "link_down": [],
     "buffer_config": {
-      "long_dist_headroom": "5000000B",
-      "long_dist_reserve": "12500000B",
-      "short_hdrm_size": "64250B",
-      "short_reserve_size": "64250B",
-      "long_buffer_size": "377265536B",
-      "short_buffer_size": "32MB"
+      "long_buffer_size": "537265536B",
+      "short_buffer_size": "33554432B",
+      "host_leaf_headroom": "37500B",
+      "host_leaf_reserve": "4096B",
+      "leaf_host_headroom": "37500B",
+      "leaf_host_reserve": "4096B",
+      "leaf_spine_headroom": "75000B",
+      "leaf_spine_reserve": "4096B",
+      "spine_leaf_headroom": "75000B",
+      "spine_leaf_reserve": "4096B",
+      "spine_spine_headroom": "20000000B",
+      "spine_spine_reserve": "12500000B"
     },
     "config_overrides": {
-      "ENABLE_RTO" : 1,
+      "ENABLE_RTO": 1,
       "ENABLE_PFC": 1,
       "ENABLE_QCN": 0,
       "USE_DYNAMIC_PFC_THRESHOLD": 1,
       "CC_MODE": 1,
       "ACK_HIGH_PRIO": 1,
-      "HAS_WIN" : 1,
+      "HAS_WIN": 1,
       "GLOBAL_T": 1,
-      "WAIT_ACK_TIMEOUT" : 4000,
+      "WAIT_ACK_TIMEOUT": 4000,
       "SIMULATOR_STOP_TIME": 50.0
     },
     "ecn_thresholds": [
       {
         "bandwidth": "200Gbps",
-        "kmin": 600,
-        "kmax": 2400,
+        "kmin": 1600,
+        "kmax": 3200,
         "pmax": 0.2
       },
       {
         "bandwidth": "400Gbps",
-        "kmin": 800,
-        "kmax": 3200,
+        "kmin": 3200,
+        "kmax": 6400,
         "pmax": 0.2
       }
     ]
