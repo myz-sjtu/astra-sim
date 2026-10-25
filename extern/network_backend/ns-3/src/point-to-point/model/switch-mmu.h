@@ -20,6 +20,7 @@ public:
 	static TypeId GetTypeId (void);
 
 	SwitchMmu(void);
+	bool m_verboseOutput;
 
 	bool CheckIngressAdmission(uint32_t port, uint32_t qIndex, uint32_t psize);
 	bool CheckEgressAdmission(uint32_t port, uint32_t qIndex, uint32_t psize);

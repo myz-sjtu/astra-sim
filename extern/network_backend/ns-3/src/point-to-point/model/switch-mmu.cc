@@ -11,18 +11,29 @@
 #include "ns3/boolean.h"
 #include "ns3/simulator.h"
 #include "ns3/random-variable-stream.h"
+#include <cstdio>
 #include "switch-mmu.h"
+
+// Headroom overflow is recorded by the caller's drop statistics. Runtime
+// gating avoids one stdout line per dropped packet during batch runs.
+#define printf(...) do { if (m_verboseOutput) std::printf(__VA_ARGS__); } while (0)
 
 NS_LOG_COMPONENT_DEFINE("SwitchMmu");
 namespace ns3 {
 	TypeId SwitchMmu::GetTypeId(void){
 		static TypeId tid = TypeId("ns3::SwitchMmu")
 			.SetParent<Object>()
-			.AddConstructor<SwitchMmu>();
+			.AddConstructor<SwitchMmu>()
+			.AddAttribute("VerboseOutput",
+				"Enable verbose MMU drop diagnostics.",
+				BooleanValue(false),
+				MakeBooleanAccessor(&SwitchMmu::m_verboseOutput),
+				MakeBooleanChecker());
 		return tid;
 	}
 
 	SwitchMmu::SwitchMmu(void){
+		m_verboseOutput = false;
 		buffer_size = 12 * 1024 * 1024;
 		resume_offset = 3 * 1024;
 

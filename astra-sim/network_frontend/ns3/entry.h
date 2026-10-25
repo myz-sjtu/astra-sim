@@ -312,7 +312,7 @@ FILE *get_reorder_output_file() {
   }
 
   fprintf(fout, "# columns:\n");
-  fprintf(fout, "# sip_hex dip_hex src_id dst_id tag sport dport pg fwd_mode total_data_packets total_payload_bytes ooo_packet_count ooo_ratio late_packet_count late_ratio duplicate_packet_count avg_reorder_distance_packets max_reorder_distance_packets max_reorder_distance_bytes peak_ooo_buffer_packets peak_ooo_buffer_bytes ooo_wait_events avg_ooo_wait_ns max_ooo_wait_ns\n");
+  fprintf(fout, "# sip_hex dip_hex src_id dst_id tag sport dport pg fwd_mode total_data_packets total_payload_bytes ooo_packet_count ooo_ratio late_packet_count late_ratio duplicate_packet_count avg_reorder_distance_packets max_reorder_distance_packets max_reorder_distance_bytes peak_ooo_buffer_packets peak_ooo_buffer_bytes ooo_wait_events avg_ooo_wait_ns max_ooo_wait_ns ooo_receive_mode ooo_buffer_limit_bytes ooo_overflow_packet_count ooo_overflow_bytes gbn_flush_packet_count gbn_flush_bytes gbn_recovery_drop_packet_count gbn_recovery_drop_bytes nack_count remaining_ooo_packets remaining_ooo_bytes\n");
   fprintf(fout, "# ooo_packet_count counts packets arriving with seq > ReceiverNextExpectedSeq at arrival time.\n");
   fprintf(fout, "# late_packet_count counts non-duplicate packets arriving after a higher sequence number was already seen.\n");
   fprintf(fout, "# duplicate_packet_count counts packets already delivered or already cached in the OOO buffer.\n");
@@ -348,16 +348,31 @@ void qp_finish_print_reorder_stats(Ptr<RdmaQueuePair> q,
   uint32_t peakOooBufferPackets = rxQp == nullptr ? 0 : rxQp->m_peakOooBufferPackets;
   uint64_t peakOooBufferBytes = rxQp == nullptr ? 0 : rxQp->m_peakOooBufferBytes;
   uint64_t maxOooWaitNs = rxQp == nullptr ? 0 : rxQp->m_maxOooWaitNs;
+  uint32_t oooReceiveMode = rxQp == nullptr ? 0 : rxQp->m_oooReceiveMode;
+  uint64_t oooBufferLimitBytes = rxQp == nullptr ? 0 : rxQp->m_oooBufferLimitBytes;
+  uint64_t oooOverflowPacketCount = rxQp == nullptr ? 0 : rxQp->m_oooOverflowPacketCount;
+  uint64_t oooOverflowBytes = rxQp == nullptr ? 0 : rxQp->m_oooOverflowBytes;
+  uint64_t gbnFlushPacketCount = rxQp == nullptr ? 0 : rxQp->m_gbnFlushPacketCount;
+  uint64_t gbnFlushBytes = rxQp == nullptr ? 0 : rxQp->m_gbnFlushBytes;
+  uint64_t gbnRecoveryDropPacketCount = rxQp == nullptr ? 0 : rxQp->m_gbnRecoveryDropPacketCount;
+  uint64_t gbnRecoveryDropBytes = rxQp == nullptr ? 0 : rxQp->m_gbnRecoveryDropBytes;
+  uint64_t nackCount = rxQp == nullptr ? 0 : rxQp->m_nackCount;
+  uint64_t remainingOooPackets = rxQp == nullptr ? 0 : rxQp->m_oooReceived.size();
+  uint64_t remainingOooBytes = rxQp == nullptr ? 0 : rxQp->m_currentOooBufferBytes;
 
   fprintf(fout,
-          "%08x %08x %u %u %lu %u %u %u %u %lu %lu %lu %.8lf %lu %.8lf %lu %.8lf %u %u %u %lu %lu %.8lf %lu\n",
+          "%08x %08x %u %u %lu %u %u %u %u %lu %lu %lu %.8lf %lu %.8lf %lu %.8lf %u %u %u %lu %lu %.8lf %lu %u %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n",
           q->sip.Get(), q->dip.Get(), sid, did, tag, q->sport, q->dport,
           q->m_pg, static_cast<uint32_t>(q->m_fwd_mode), totalDataPackets,
           totalPayloadBytes, oooPacketCount, oooRatio, latePacketCount,
           lateRatio, duplicatePacketCount, avgReorderDistancePackets,
           maxReorderDistancePackets, maxReorderDistanceBytes,
           peakOooBufferPackets, peakOooBufferBytes, oooWaitEvents,
-          avgOooWaitNs, maxOooWaitNs);
+          avgOooWaitNs, maxOooWaitNs, oooReceiveMode, oooBufferLimitBytes,
+          oooOverflowPacketCount, oooOverflowBytes, gbnFlushPacketCount,
+          gbnFlushBytes, gbnRecoveryDropPacketCount, gbnRecoveryDropBytes,
+          nackCount,
+          remainingOooPackets, remainingOooBytes);
   fflush(fout);
 }
 

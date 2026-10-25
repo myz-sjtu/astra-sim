@@ -42,6 +42,13 @@ idx       = (m_rrCounter[inDev] + flow_base) % nexthops
 - `ooo_wait_events`: 提前缓存、随后因低序号包补齐而被连续前缀释放的包数。
 - `avg_ooo_wait_ns`: OOO 包从提前到达到被释放的平均等待时间。
 - `max_ooo_wait_ns`: OOO 包最大等待时间。
+- `ooo_receive_mode`: `0` 为无限 OOO buffer，`1` 为有限 per-Rx-QP OOO buffer + NACK/GBN，`2` 为未来 SACK/选择性重传预留模式，目前不实现。
+- `ooo_buffer_limit_bytes`: 当前 Rx QP 的 OOO payload buffer 上限；无限模式为 `0`。
+- `ooo_overflow_packet_count` / `ooo_overflow_bytes`: 因有限 OOO buffer 无法缓存而被拒绝的乱序包数和字节数。
+- `gbn_flush_packet_count` / `gbn_flush_bytes`: 有限 buffer 溢出实际触发 NACK/GBN 时，接收端主动丢弃的已缓存乱序包数和 payload 字节数。
+- `gbn_recovery_drop_packet_count` / `gbn_recovery_drop_bytes`: GBN 恢复期间，在缺口包到达前被直接丢弃的后续乱序包数和 payload 字节数。
+- `nack_count`: 该 Rx QP 实际发送的 NACK 数量，包括有限 OOO buffer 溢出触发的 NACK。
+- `remaining_ooo_packets` / `remaining_ooo_bytes`: QP 完成统计时仍留在 OOO buffer 中的包数和 payload bytes。
 
 ## 输出文件
 
@@ -50,7 +57,9 @@ idx       = (m_rrCounter[inDev] + flow_base) % nexthops
 输出列固定为：
 
 ```text
-sip_hex dip_hex src_id dst_id tag sport dport pg fwd_mode total_data_packets total_payload_bytes ooo_packet_count ooo_ratio late_packet_count late_ratio duplicate_packet_count avg_reorder_distance_packets max_reorder_distance_packets max_reorder_distance_bytes peak_ooo_buffer_packets peak_ooo_buffer_bytes ooo_wait_events avg_ooo_wait_ns max_ooo_wait_ns
+sip_hex dip_hex src_id dst_id tag sport dport pg fwd_mode total_data_packets total_payload_bytes ooo_packet_count ooo_ratio late_packet_count late_ratio duplicate_packet_count avg_reorder_distance_packets max_reorder_distance_packets max_reorder_distance_bytes peak_ooo_buffer_packets peak_ooo_buffer_bytes ooo_wait_events avg_ooo_wait_ns max_ooo_wait_ns ooo_receive_mode ooo_buffer_limit_bytes ooo_overflow_packet_count ooo_overflow_bytes gbn_flush_packet_count gbn_flush_bytes gbn_recovery_drop_packet_count gbn_recovery_drop_bytes nack_count remaining_ooo_packets remaining_ooo_bytes
 ```
 
 `fwd_mode=1` 的行是 packet-spray 主体；`fwd_mode=0` 行可作为 flow-based 对照或用于检查场景是否真正开启逐包转发。
+
+长时间批量仿真建议保持 `VERBOSE_OUTPUT=0`。该选项关闭 RDMA 速率控制、接收异常、NIC pause、MMU headroom 和 ARN trace 的高频 stdout 调试输出，不影响 `fct.txt`、`reorder_stats.txt`、`pfc.txt` 和 drop 统计文件；需要定位这些问题时设置为 `1`，并在需要时同时设置 `ENABLE_ARN_TRACE=1`。

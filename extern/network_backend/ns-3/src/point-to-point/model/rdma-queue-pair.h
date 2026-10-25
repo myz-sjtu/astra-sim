@@ -144,6 +144,8 @@ public:
 
 	// Out-of-order reception support and statistics for packet spray.
 	bool m_oooEnabled; //!< Enable out-of-order reception
+	uint32_t m_oooReceiveMode; //!< 0=unlimited, 1=finite buffer with NACK/GBN
+	uint64_t m_oooBufferLimitBytes; //!< Per-Rx-QP OOO payload buffer limit; 0 is valid in finite mode
 	std::unordered_map<uint32_t, OooPacketInfo> m_oooReceived; //!< Cached OOO packets: seq -> metadata
 	bool m_hasSeenSeq;
 	uint32_t m_maxSeenSeq;
@@ -161,6 +163,14 @@ public:
 	uint64_t m_oooWaitEvents;
 	uint64_t m_oooWaitTimeNsSum;
 	uint64_t m_maxOooWaitNs;
+	uint64_t m_oooOverflowPacketCount;
+	uint64_t m_oooOverflowBytes;
+	uint64_t m_gbnFlushPacketCount;
+	uint64_t m_gbnFlushBytes;
+	bool m_gbnRecoveryActive;
+	uint64_t m_gbnRecoveryDropPacketCount;
+	uint64_t m_gbnRecoveryDropBytes;
+	uint64_t m_nackCount;
 
 	static TypeId GetTypeId (void);
 	RdmaRxQueuePair();

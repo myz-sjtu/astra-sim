@@ -13,6 +13,12 @@
 #include "qbb-header.h"
 #include "cn-header.h"
 #include <algorithm>
+#include <cstdio>
+
+// Rate-control printf calls are runtime-gated so batch runs avoid formatting
+// and stdout synchronization overhead while VERBOSE_OUTPUT=1 remains useful
+// for targeted debugging. File-based statistics remain enabled in both modes.
+#define printf(...) do { if (m_verboseOutput) std::printf(__VA_ARGS__); } while (0)
 
 namespace ns3{
 
@@ -59,6 +65,22 @@ TypeId RdmaHw::GetTypeId (void)
 				"Layer 2 go back to zero transmission.",
 				BooleanValue(false),
 				MakeBooleanAccessor(&RdmaHw::m_backto0),
+				MakeBooleanChecker())
+		.AddAttribute("OooReceiveMode",
+				"OOO receive mode: 0=unlimited, 1=finite buffer with NACK/GBN; 2 is reserved.",
+				UintegerValue(RdmaHw::OOO_RECEIVE_UNLIMITED),
+				MakeUintegerAccessor(&RdmaHw::m_oooReceiveMode),
+				MakeUintegerChecker<uint32_t>(RdmaHw::OOO_RECEIVE_UNLIMITED,
+																																																				RdmaHw::OOO_RECEIVE_FUTURE_SACK))
+		.AddAttribute("OooBufferSize",
+				"Per-Rx-QP OOO payload buffer limit in bytes; used only by finite NACK/GBN mode.",
+				UintegerValue(0),
+				MakeUintegerAccessor(&RdmaHw::m_oooBufferSize),
+				MakeUintegerChecker<uint64_t>())
+		.AddAttribute("VerboseOutput",
+				"Enable high-frequency RDMA debug output on stdout.",
+				BooleanValue(false),
+				MakeBooleanAccessor(&RdmaHw::m_verboseOutput),
 				MakeBooleanChecker())
 		.AddAttribute("EwmaGain",
 				"Control gain parameter which determines the level of rate decrease",
@@ -192,12 +214,20 @@ TypeId RdmaHw::GetTypeId (void)
 RdmaHw::RdmaHw(){
 	enable_pcie_pause = true;
 	m_paused_times = 0;
+	m_oooReceiveMode = OOO_RECEIVE_UNLIMITED;
+	m_oooBufferSize = 0;
+	m_verboseOutput = false;
 }
 
 void RdmaHw::SetNode(Ptr<Node> node){
 	m_node = node;
 }
 void RdmaHw::Setup(QpCompleteCallback cb){
+	NS_ASSERT_MSG(m_oooReceiveMode != OOO_RECEIVE_FUTURE_SACK,
+				"OooReceiveMode=2 is reserved for future SACK/selective retransmission and is not implemented");
+	NS_ASSERT_MSG(m_oooReceiveMode != OOO_RECEIVE_FINITE_NACK_GBN ||
+				m_oooBufferSize > 0,
+				"OooBufferSize must be positive when OooReceiveMode=1");
 	for (uint32_t i = 0; i < m_nic.size(); i++){
 		Ptr<QbbNetDevice> dev = m_nic[i].dev;
 		if (!dev)
@@ -296,6 +326,8 @@ Ptr<RdmaRxQueuePair> RdmaHw::GetRxQp(uint32_t sip, uint32_t dip, uint16_t sport,
 		q->sport = sport;
 		q->dport = dport;
 		q->m_ecn_source.qIndex = pg;
+		q->m_oooReceiveMode = m_oooReceiveMode;
+		q->m_oooBufferLimitBytes = m_oooBufferSize;
 		// store in map
 		m_rxQpMap[key] = q;
 		return q;
@@ -336,7 +368,8 @@ void RdmaHw::PCIePause(uint32_t nic_idx, uint32_t qIndex){
 	Ptr<Packet> p = dev->NICSendPfc(qIndex, 0);
 	m_nic[nic_idx].dev->RdmaEnqueueHighPrioQ(p);
     m_nic[nic_idx].dev->TriggerTransmit();
-	std::cout << "NIC pause "<< m_node->GetId() << " at " << Simulator::Now().GetNanoSeconds() << " paused " << m_paused_times << std::endl;
+	if (m_verboseOutput)
+		std::cout << "NIC pause "<< m_node->GetId() << " at " << Simulator::Now().GetNanoSeconds() << " paused " << m_paused_times << std::endl;
     Simulator::Schedule(MicroSeconds(10), &RdmaHw::PCIeResume, this, nic_idx, qIndex);
 }
 
@@ -363,7 +396,7 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch){
 
 	int x = ReceiverCheckSeq(ch.udp.seq, rxQp, payload_size);
 
-	if(x !=1 && x!=2){
+	if(m_verboseOutput && x !=1 && x!=2){
 		std::cout << Simulator::Now().GetNanoSeconds() << " Rx ";
 		Ipv4Address(ch.sip).Print(std::cout);
 		std::cout << " " << ch.udp.sport << " ";
@@ -567,9 +600,58 @@ int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size
         q->m_maxReorderDistanceBytes = std::max(q->m_maxReorderDistanceBytes, distanceBytes);
     }
 
-    // Out-of-order mode (for packet spray)
+    // Out-of-order mode (for packet spray). In finite mode, an OOO packet
+    // that would exceed the per-Rx-QP payload budget is rejected and causes
+    // the existing NACK/GBN recovery path to run.
     if (q->m_oooEnabled) {
         if (seq > expected) {
+            if (q->m_gbnRecoveryActive) {
+                // During GBN recovery, do not refill the OOO buffer with
+                // packets beyond the missing cumulative prefix.
+                q->m_gbnRecoveryDropPacketCount++;
+                q->m_gbnRecoveryDropBytes += size;
+                if (Simulator::Now() >= q->m_nackTimer ||
+                    q->m_lastNACK != expected) {
+                    q->m_nackTimer = Simulator::Now() + MicroSeconds(m_nack_interval);
+                    q->m_lastNACK = expected;
+                    q->m_nackCount++;
+                    if (m_backto0) {
+                        q->ReceiverNextExpectedSeq =
+                            q->ReceiverNextExpectedSeq / m_chunk * m_chunk;
+                    }
+                    return 2;
+                }
+                return 4;
+            }
+            bool finiteBuffer =
+                q->m_oooReceiveMode == OOO_RECEIVE_FINITE_NACK_GBN;
+            bool bufferFull = finiteBuffer &&
+                (q->m_currentOooBufferBytes > q->m_oooBufferLimitBytes ||
+                 size > q->m_oooBufferLimitBytes - q->m_currentOooBufferBytes);
+            if (bufferFull) {
+                q->m_oooOverflowPacketCount++;
+                q->m_oooOverflowBytes += size;
+                if (Simulator::Now() >= q->m_nackTimer ||
+                    q->m_lastNACK != expected) {
+                    q->m_nackTimer = Simulator::Now() + MicroSeconds(m_nack_interval);
+                    q->m_lastNACK = expected;
+                    // GBN restarts from the cumulative receive prefix.
+                    // Cached packets beyond that prefix are no longer
+                    // useful to this recovery round.
+                    q->m_gbnFlushPacketCount += q->m_oooReceived.size();
+                    q->m_gbnFlushBytes += q->m_currentOooBufferBytes;
+                    q->m_gbnRecoveryActive = true;
+                    q->m_oooReceived.clear();
+                    q->m_currentOooBufferBytes = 0;
+                    q->m_nackCount++;
+                    if (m_backto0) {
+                        q->ReceiverNextExpectedSeq =
+                            q->ReceiverNextExpectedSeq / m_chunk * m_chunk;
+                    }
+                    return 2; // NACK; sender performs GBN-style recovery.
+                }
+                return 4; // Suppress repeated NACK for the same gap.
+            }
             q->m_oooReceived[seq] = {size, now};
             q->m_currentOooBufferBytes += size;
             q->m_peakOooBufferPackets = std::max(
@@ -591,6 +673,7 @@ int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size
                 q->m_oooReceived.erase(cachedSeq);
             }
             q->ReceiverNextExpectedSeq = expected;
+            q->m_gbnRecoveryActive = false;
         }
 
         if (q->ReceiverNextExpectedSeq >= q->m_milestone_rx) {
@@ -619,6 +702,7 @@ int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size
         if (Simulator::Now() >= q->m_nackTimer || q->m_lastNACK != expected){
             q->m_nackTimer = Simulator::Now() + MicroSeconds(m_nack_interval);
             q->m_lastNACK = expected;
+            q->m_nackCount++;
             if (m_backto0){
                 q->ReceiverNextExpectedSeq = q->ReceiverNextExpectedSeq / m_chunk*m_chunk;
             }

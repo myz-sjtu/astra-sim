@@ -643,6 +643,32 @@ def normalize_buffer_config(raw_buffer_config: Any) -> dict[str, str]:
     return normalized
 
 
+def normalize_ooo_config(network: dict[str, Any]) -> dict[str, str]:
+    """Validate OOO receive policy and render it into network_config.txt."""
+    mode = require_int(network.get("ooo_receive_mode", 0), "network.ooo_receive_mode")
+    if mode not in (0, 1, 2):
+        raise ScenarioError(
+            "network.ooo_receive_mode must be 0=unlimited, "
+            "1=finite NACK/GBN, or 2=reserved SACK"
+        )
+    raw_size = network.get("ooo_buffer_size", "0B")
+    size = parse_byte_size(raw_size, "network.ooo_buffer_size")
+    if mode == 2:
+        raise ScenarioError(
+            "network.ooo_receive_mode=2 is reserved for future SACK/selective retransmission "
+            "and is not implemented"
+        )
+    if mode == 1 and size == 0:
+        raise ScenarioError(
+            "network.ooo_buffer_size must be positive when "
+            "network.ooo_receive_mode=1"
+        )
+    return {
+        "OOO_RECEIVE_MODE": str(mode),
+        "OOO_BUFFER_SIZE": f"{size}B",
+    }
+
+
 def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
     name = raw.get("name", "custom_network")
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
@@ -850,6 +876,7 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
 
     link_down = normalize_link_down(network.get("link_down"), links, node_count)
     buffer_config = normalize_buffer_config(network.get("buffer_config"))
+    ooo_config = normalize_ooo_config(network)
     config_overrides = normalize_config_overrides(network.get("config_overrides"))
 
     ecn_thresholds = None
@@ -924,6 +951,7 @@ def normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
             "qlen_mon_interval_ns": qlen_mon_interval_ns,
             "link_down": link_down,
             "buffer_config": buffer_config,
+            "ooo_config": ooo_config,
             "ecn_thresholds": ecn_thresholds,
             "config_overrides": config_overrides,
         },
@@ -1241,6 +1269,7 @@ def generate(
         "LINK_DOWN": render_link_down(network["link_down"]),
     }
     replacements.update(network["buffer_config"])
+    replacements.update(network["ooo_config"])
     if network["q_level"]:
         replacements["Q_LEVEL"] = f"{len(network['q_level'])} " + " ".join(str(v) for v in network["q_level"])
     if network["load_level"]:
@@ -1286,6 +1315,17 @@ def generate(
         "fct_output": f"scratch/output/{name}/fct.txt",
         "reorder_output": f"scratch/output/{name}/reorder_stats.txt",
         "output_directory": f"scratch/output/{name}",
+        "ooo_receive": {
+            "mode": int(network["ooo_config"]["OOO_RECEIVE_MODE"]),
+            "buffer_size_bytes": int(
+                network["ooo_config"]["OOO_BUFFER_SIZE"][:-1]
+            ),
+            "mode_names": {
+                "0": "unlimited",
+                "1": "finite_nack_gbn",
+                "2": "reserved_sack",
+            },
+        },
         "annotation_command": (
             f"python3 {ns3_relative(REPO_ROOT / 'examples' / 'custom_network' / 'annotate_output_files.py')} "
             f"--output-dir {ns3_relative(ns3_output_dir)}"

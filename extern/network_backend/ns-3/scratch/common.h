@@ -95,6 +95,9 @@ uint32_t ack_high_prio = 0;
 uint32_t flow_strategy = 0;  // Flow-based forwarding strategy: 0=ECMP, 1=PathPinning
 uint32_t packet_strategy = 0; // Packet-based forwarding strategy: 0=RR, 1=Random, 2=DLB
 uint8_t default_fwd_mode = 0; // Default forwarding mode for all flows: 0=flow-based, 1=packet spray
+uint32_t ooo_receive_mode = 0; // 0=unlimited, 1=finite OOO + NACK/GBN, 2=reserved SACK
+uint64_t ooo_buffer_size_bytes = 0; // Per-Rx-QP OOO payload limit; used in mode 1
+bool verbose_output = false; // High-frequency stdout debug output
 uint32_t arn_packet_strategy = 3; // 3=GLB for the first ARN migration stage
 bool enable_arn = false;
 uint64_t arn_interval_ns = 10000;
@@ -1026,7 +1029,23 @@ bool ReadConf(string network_configuration) {
     } else if (key.compare("DEFAULT_FWD_MODE") == 0) {
       uint32_t v;
       conf >> v;
+      NS_ASSERT_MSG(v <= 1, "DEFAULT_FWD_MODE must be 0=flow-based or 1=packet-spray");
       default_fwd_mode = (uint8_t)v;
+    } else if (key.compare("OOO_RECEIVE_MODE") == 0) {
+      uint32_t v;
+      conf >> v;
+      NS_ASSERT_MSG(v <= 2,
+                    "OOO_RECEIVE_MODE must be 0=unlimited, 1=finite NACK/GBN, or 2=reserved SACK");
+      ooo_receive_mode = v;
+    } else if (key.compare("OOO_BUFFER_SIZE") == 0) {
+      std::string v;
+      conf >> v;
+      ooo_buffer_size_bytes = ParseByteSize(v, key);
+    } else if (key.compare("VERBOSE_OUTPUT") == 0) {
+      uint32_t v;
+      conf >> v;
+      NS_ASSERT_MSG(v <= 1, "VERBOSE_OUTPUT must be 0 or 1");
+      verbose_output = v != 0;
     } else if (key.compare("DCTCP_RATE_AI") == 0) {
       conf >> dctcp_rate_ai;
     } else if (key.compare("NIC_TOTAL_PAUSE_TIME") == 0) {
@@ -1452,7 +1471,9 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
       sw->SetAttribute("IsSpine", BooleanValue(spineSwitchIds.find(i) != spineSwitchIds.end()));
       sw->SetAttribute("ArnInterval", TimeValue(NanoSeconds(arn_interval_ns)));
       sw->SetAttribute("CongestionQueueLength", UintegerValue(arn_congestion_qlen));
-      sw->SetAttribute("ArnTrace", BooleanValue(enable_arn_trace));
+      sw->SetAttribute("ArnTrace",
+                       BooleanValue(enable_arn_trace && verbose_output));
+      sw->m_mmu->SetAttribute("VerboseOutput", BooleanValue(verbose_output));
       sw->q_level = q_level;
       sw->load_level = load_level;
       uint32_t shift = 3; // by default 1/8
@@ -1600,6 +1621,9 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
       rdmaHw->SetAttribute("L2AckInterval", UintegerValue(l2_ack_interval));
       rdmaHw->SetAttribute("RtoEnabled", BooleanValue(enable_rto));
       rdmaHw->SetAttribute("CcMode", UintegerValue(cc_mode));
+      rdmaHw->SetAttribute("OooReceiveMode", UintegerValue(ooo_receive_mode));
+      rdmaHw->SetAttribute("OooBufferSize", UintegerValue(ooo_buffer_size_bytes));
+      rdmaHw->SetAttribute("VerboseOutput", BooleanValue(verbose_output));
       rdmaHw->SetAttribute("RateDecreaseInterval",
                            DoubleValue(rate_decrease_interval));
       rdmaHw->SetAttribute("MinRate", DataRateValue(DataRate(min_rate)));

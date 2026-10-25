@@ -220,6 +220,8 @@ RdmaRxQueuePair::RdmaRxQueuePair(){
 	m_milestone_rx = 0;
 	m_lastNACK = 0;
 	m_oooEnabled = false;
+	m_oooReceiveMode = 0;
+	m_oooBufferLimitBytes = 0;
 	m_oooReceived.clear();
 	m_hasSeenSeq = false;
 	m_maxSeenSeq = 0;
@@ -237,6 +239,14 @@ RdmaRxQueuePair::RdmaRxQueuePair(){
 	m_oooWaitEvents = 0;
 	m_oooWaitTimeNsSum = 0;
 	m_maxOooWaitNs = 0;
+	m_oooOverflowPacketCount = 0;
+	m_oooOverflowBytes = 0;
+	m_gbnFlushPacketCount = 0;
+	m_gbnFlushBytes = 0;
+	m_gbnRecoveryActive = false;
+	m_gbnRecoveryDropPacketCount = 0;
+	m_gbnRecoveryDropBytes = 0;
+	m_nackCount = 0;
 }
 
 uint32_t RdmaRxQueuePair::GetHash(void){

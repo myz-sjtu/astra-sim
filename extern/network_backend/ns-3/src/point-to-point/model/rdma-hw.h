@@ -23,6 +23,11 @@ struct RdmaInterfaceMgr{
 
 class RdmaHw : public Object {
 public:
+	enum OooReceiveMode : uint32_t {
+		OOO_RECEIVE_UNLIMITED = 0,
+		OOO_RECEIVE_FINITE_NACK_GBN = 1,
+		OOO_RECEIVE_FUTURE_SACK = 2,
+	};
 
 	static TypeId GetTypeId (void);
 	RdmaHw();
@@ -36,6 +41,9 @@ public:
 	uint32_t m_chunk;
 	uint32_t m_ack_interval;
 	bool m_backto0;
+	bool m_verboseOutput; //!< Enable high-frequency stdout debug output
+	uint32_t m_oooReceiveMode; //!< 0=unlimited, 1=finite NACK/GBN, 2=reserved SACK mode
+	uint64_t m_oooBufferSize; //!< Per-Rx-QP OOO payload buffer limit in bytes
 	bool m_var_win, m_fast_react;
 	bool m_rateBound;
 	uint32_t m_total_pause_times; 

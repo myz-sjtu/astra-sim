@@ -64,6 +64,9 @@ ACK_HIGH_PRIO 0 {0: ACK shares data priority, 1: ACK uses high priority queue}
 FLOW_STRATEGY 1 {flow-based switch forwarding: 0 ECMP, 1 PathPinning}
 PACKET_STRATEGY 0 {packet-based switch forwarding: 0 ßround-robin packet spray, 1 random packet spray, 2 DLB packet spray over the least-queued half of nexthops}
 DEFAULT_FWD_MODE 0 {default per-flow forwarding mode: 0 flow-based forwarding, 1 packet-spray forwarding}
+OOO_RECEIVE_MODE 0 {receiver OOO policy: 0 unlimited OOO buffer, 1 finite per-Rx-QP OOO buffer with NACK/GBN, 2 reserved for future SACK/selective retransmission}
+OOO_BUFFER_SIZE 0B {per-Rx-QP OOO payload buffer limit; required and positive when OOO_RECEIVE_MODE=1, ignored in mode 0}
+VERBOSE_OUTPUT 0 {0: suppress high-frequency RDMA/MMU stdout debug output, 1: enable it for debugging; file-based statistics are unaffected}
 
 LINK_DOWN 0 {no link failures}
 LINK_DOWN {multi-line format}
@@ -111,3 +114,4 @@ generate_custom_inputs.py rewrites TOPOLOGY_FILE, FLOW_FILE, TRACE_FILE, FCT_OUT
 scenario.network.config_overrides can rewrite raw config keys such as ENABLE_PFC, ENABLE_QCN, ENABLE_RTO, WAIT_ACK_TIMEOUT, CC_MODE, ACK_HIGH_PRIO, and USE_DYNAMIC_PFC_THRESHOLD.
 Use FLOW_STRATEGY 1 with DEFAULT_FWD_MODE 0 to exercise HPCC-Dev-style path pinning.
 Use DEFAULT_FWD_MODE 1 to exercise packet spray; packet spray uses PACKET_STRATEGY 0=flow-base round-robin, 1=random, or 2=DLB least-queued half random.
+For packet-spray receiver experiments, use OOO_RECEIVE_MODE 0 for the legacy unlimited buffer or 1 for finite OOO buffering with NACK/GBN recovery. OOO_BUFFER_SIZE is a per-Rx-QP payload-byte limit; an OOO packet that would exceed it is rejected, the cached OOO entries are flushed, and the existing NACK/GBN path starts recovery. During recovery, later OOO packets are discarded until the missing cumulative prefix arrives. Mode 2 is reserved and currently rejected by ns-3.
