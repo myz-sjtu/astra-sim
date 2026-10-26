@@ -591,16 +591,16 @@ def write_flow_file(scenario: dict[str, Any], output_path: Path) -> None:
     for flow in scenario["flows"]:
         lines.append(
             f"{flow['src']} {flow['dst']} 3 100 {flow['bytes']} "
-            f"{format_seconds_from_ns(flow['start_time_ns'])} {flow['fwd_mode']}"
+            f"{format_seconds_from_ns(flow['start_time_ns'])} {flow['fwd_mode']} {flow['tag']}"
         )
     lines.extend(
         [
             "",
             "# columns:",
             "# first row: flow_count",
-            "# flow rows: src dst priority_group dst_port payload_bytes start_time_seconds strategy",
+            "# flow rows: src dst priority_group dst_port payload_bytes start_time_seconds strategy comm_tag",
             "# strategy: 0=flow ECMP, 1=packet spray",
-            "# ASTRA-sim maps row order to comm_tag = row_index + 1 for start/strategy overrides.",
+            "# comm_tag explicitly identifies the ASTRA-sim message for start/strategy overrides.",
         ]
     )
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -714,7 +714,7 @@ def write_traffic_manifest(scenario: dict[str, Any], output_path: Path) -> None:
                     "src": "source rank / host node ID",
                     "dst": "destination rank / host node ID",
                     "bytes": "payload bytes",
-                    "tag": "ASTRA-sim comm_tag; explicit flows should match flow row order for HPCC-style overrides",
+                    "tag": "ASTRA-sim comm_tag; matches the explicit tag column in flow.txt",
                     "start_time_ns": "requested flow start time in ns",
                     "fwd_mode": "0=flow ECMP, 1=packet spray",
                 },

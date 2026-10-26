@@ -516,10 +516,11 @@ int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size
         q->m_oooReceived[seq] = size;
 
         // Advance expected through contiguous cached packets
-        while (q->m_oooReceived.count(expected)) {
-            expected += q->m_oooReceived[expected];
-            q->m_oooReceived.erase(expected - size); // erase by key
-            // Note: after erase, expected already points to next expected
+        auto received = q->m_oooReceived.find(expected);
+        while (received != q->m_oooReceived.end()) {
+            expected += received->second;
+            q->m_oooReceived.erase(received);
+            received = q->m_oooReceived.find(expected);
         }
         q->ReceiverNextExpectedSeq = expected;
 

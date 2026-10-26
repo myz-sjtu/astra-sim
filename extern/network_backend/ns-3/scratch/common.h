@@ -17,6 +17,7 @@
 #undef PGO_TRAINING
 #define PATH_TO_PGO_CONFIG "path_to_pgo_config"
 
+#include "flow-input.h"
 #include "ns3/applications-module.h"
 #include "ns3/core-module.h"
 #include "ns3/error-model.h"
@@ -808,15 +809,30 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
 
   configured_flow_start_ns.clear();
   configured_flow_fwd_mode.clear();
+  std::string flow_line;
+  std::getline(flowf, flow_line); // consume the count line
   for (uint32_t i = 0; i < flow_num; i++) {
-    uint32_t src, dst, pg, dport, strategy;
-    uint64_t size;
-    double start_time_seconds;
-    flowf >> src >> dst >> pg >> dport >> size >> start_time_seconds >> strategy;
-    auto key = make_tuple(src, dst, i + 1);
-    configured_flow_start_ns[key] =
-        static_cast<uint64_t>(start_time_seconds * 1000000000.0 + 0.5);
-    configured_flow_fwd_mode[key] = static_cast<uint8_t>(strategy);
+    do {
+      if (!std::getline(flowf, flow_line)) {
+        std::cerr << "Error: missing flow row " << i + 1 << std::endl;
+        return false;
+      }
+    } while (AstraSimFlowInput::IsCommentOrEmpty(flow_line));
+    AstraSimFlowInput::FlowRow row;
+    if (!AstraSimFlowInput::ParseFlowRow(flow_line, i + 1, row)) {
+      std::cerr << "Error: invalid flow row " << i + 1 << ": " << flow_line
+                << std::endl;
+      return false;
+    }
+    auto key = make_tuple(row.src, row.dst, row.tag);
+    if (configured_flow_start_ns.count(key)) {
+      std::cerr << "Error: duplicate (src, dst, tag) in flow row " << i + 1
+                << std::endl;
+      return false;
+    }
+    configured_flow_start_ns[key] = static_cast<uint64_t>(
+        row.start_time_seconds * 1000000000.0 + 0.5);
+    configured_flow_fwd_mode[key] = static_cast<uint8_t>(row.strategy);
   }
 
   std::vector<uint32_t> node_type(node_num, 0);

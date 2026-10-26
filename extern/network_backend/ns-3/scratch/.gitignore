@@ -7,3 +7,4 @@
 !scratch-simulator.cc
 !CMakeLists.txt
 !common.h
+!flow-input.h

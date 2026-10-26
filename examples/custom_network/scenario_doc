@@ -26,6 +26,16 @@ Each `flows` entry supports:
 
 If `strategy` is omitted, the flow uses `network.default_fwd_mode`.
 
+Generated `flow.txt` rows contain eight columns:
+`src dst priority_group dst_port payload_bytes start_time_seconds strategy comm_tag`.
+The final column is the actual Chakra communication tag, so custom tags and
+half-doubling phase tags preserve their start-time and strategy overrides.
+Legacy seven-column files are still accepted and use the one-based flow row
+number as the tag. Duplicate `(src, dst, comm_tag)` rows are rejected.
+
+In ns-3 text configs, `ARN_CONGESTION_QLEN` takes exactly one value in bytes,
+for example `ARN_CONGESTION_QLEN 300000` (no count prefix).
+
 ## Generated Traffic
 
 The supported generated pattern is `half_doubling_allreduce`:
